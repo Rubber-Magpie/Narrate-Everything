@@ -971,6 +971,7 @@ namespace DateEverythingAccess
 
             BuildInterFloorEdges();
             IndexDoorFreedCells();
+            WidenPassageDoorLeaves();
             _loadOk = true;
             if (Main.Log != null)
                 Main.Log.LogInfo("SimpleNavPlanner: bake loaded floors=" + _floors.Count +
@@ -1064,6 +1065,57 @@ namespace DateEverythingAccess
         // name→cells maps. The planner does not enable any overlay at load time;
         // ApplyLiveWorldState() (called at the top of every Plan()) installs the current set
         // based on live Door.open / SlidingDoor.open / DresserWall.collider.enabled values.
+        // DOOR-LEAF MARGIN. Every unlocked passage door is planned as OPEN, and its swung leaf
+        // (open_blocked_cells) is removed from the navigable set. The bake sized that footprint for a
+        // 0.4m capsule, but the player's real capsule is 0.8m (0.4 local x 2.0 scale), so routes that
+        // skim an open leaf catch the player's shoulder on it (observed: stuck on Doors_Office's leaf
+        // ~1m inside the office). Grow each PASSAGE door's leaf footprint by LeafExtraMarginCells,
+        // never into any door's doorway (freed) cells, so the opening itself is not narrowed.
+        // Container doors (cupboards, fridge) are left alone so standpoints in front of them survive.
+        // Offline check against the shipped bake: with every unlocked door open, this removes ~685
+        // ground and ~377 upper cells and disconnects no area on either floor.
+        private const int LeafExtraMarginCells = 2;
+
+        private static void WidenPassageDoorLeaves()
+        {
+            if (_floors == null) return;
+            int grown = 0;
+            for (int fi = 0; fi < _floors.Count; fi++)
+            {
+                Floor f = _floors[fi];
+                var allFreed = new HashSet<long>();
+                foreach (var kv in f.DoorFreedByName) allFreed.UnionWith(kv.Value);
+                var names = new List<string>(f.DoorBlockedByName.Keys);
+                for (int n = 0; n < names.Count; n++)
+                {
+                    string name = names[n];
+                    if (!_bakedDoorNames.Contains(name) || _containerDoorNames.Contains(name)) continue;
+                    HashSet<long> leaf = f.DoorBlockedByName[name];
+                    var widened = new HashSet<long>(leaf);
+                    foreach (long packed in leaf)
+                    {
+                        int ix = (int)(packed >> 32);
+                        int iz = (int)(uint)packed;
+                        for (int dx = -LeafExtraMarginCells; dx <= LeafExtraMarginCells; dx++)
+                        {
+                            for (int dz = -LeafExtraMarginCells; dz <= LeafExtraMarginCells; dz++)
+                            {
+                                if (!f.InBounds(ix + dx, iz + dz)) continue;
+                                long k = Floor.PackCell(ix + dx, iz + dz);
+                                if (allFreed.Contains(k)) continue;
+                                widened.Add(k);
+                            }
+                        }
+                    }
+                    grown += widened.Count - leaf.Count;
+                    f.DoorBlockedByName[name] = widened;
+                }
+            }
+            if (Main.Log != null)
+                Main.Log.LogInfo("SimpleNavPlanner: widened passage-door leaf footprints by " +
+                    LeafExtraMarginCells + " cells (+" + grown + " cells total)");
+        }
+
         private static void IndexDoorFreedCells()
         {
             if (_bake?.floors == null) return;
