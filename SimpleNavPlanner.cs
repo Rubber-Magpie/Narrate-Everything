@@ -2660,9 +2660,24 @@ namespace DateEverythingAccess
             BetterPlayerControl bpc = BetterPlayerControl.Instance;
             int mask = bpc != null ? ~(int)bpc.dateviatorIgnores : ~0;
             Vector3 origin = cameraPos - dir * 0.25f;
-            if (!Physics.Raycast(new Ray(origin, dir), out RaycastHit hit, float.PositiveInfinity, mask))
-                return false;
-            return GameWouldSelectTarget(hit, target);
+            RaycastHit[] hits = Physics.RaycastAll(new Ray(origin, dir), 200f, mask);
+            if (hits == null || hits.Length == 0) return false;
+            Array.Sort(hits, (a, b) => a.distance.CompareTo(b.distance));
+            for (int i = 0; i < hits.Length; i++)
+            {
+                if (hits[i].collider != null && IsTransparentTrigger(hits[i].collider)) continue;
+                return GameWouldSelectTarget(hits[i], target);
+            }
+            return false;
+        }
+
+        // A trigger collider that carries no InteractableObj (on itself or via its Rigidbody):
+        // an invisible event volume, not something the player can look at or be blocked by.
+        private static bool IsTransparentTrigger(Collider c)
+        {
+            if (c == null || !c.isTrigger) return false;
+            Transform t = c.attachedRigidbody != null ? c.attachedRigidbody.transform : c.transform;
+            return t.GetComponent<InteractableObj>() == null;
         }
 
         public static InteractableObj ResolveTargetInteractable(int targetGameObjectId)
@@ -2744,6 +2759,11 @@ namespace DateEverythingAccess
                 Collider c = hits[i].collider;
                 if (c == null) continue;
                 if (IsStructuralSlab(c)) continue; // floor/ceiling of the player's storey — look up/down past it
+                // Invisible trigger volumes (event tripwires such as TutorialDroneThreshold at the front
+                // door) are not solid and are not interactables. The player demonstrably selects the gift
+                // lid straight through TutorialDroneThreshold, so the game's ray passes through such
+                // volumes; treat them as transparent too.
+                if (strict && IsTransparentTrigger(c)) continue;
                 if (passedContainerDoors != null)
                 {
                     string containerDoor = OperableContainerDoorName(c);
