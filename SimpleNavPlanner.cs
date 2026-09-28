@@ -430,6 +430,7 @@ namespace DateEverythingAccess
                     Main.Log.LogWarning("SimpleNavPlanner.Plan: strict game-ray LOS found no standpoint for target=" +
                         (targetName ?? "<null>") + "#" + targetGameObjectId +
                         " — falling back to lenient LOS (the game may not select it on arrival).");
+                LogStrictLosDiagnostics(goalFloor, goals, targetCollider, _strictLosTarget, targetName);
                 _strictLosTarget = null;
                 usedStrictLos = false;
                 losClear.Clear(); passedOf.Clear(); clearanceOf.Clear(); goalQuality.Clear();
@@ -2270,6 +2271,79 @@ namespace DateEverythingAccess
             catch
             {
                 return NoLineOfSight;
+            }
+        }
+
+        // When the strict test finds no standpoint, record WHY: how the target is built (which
+        // transforms carry colliders / the InteractableObj / a Rigidbody) and what the game's ray
+        // actually hits first from the few goal cells nearest the object. One log block per plan.
+        private static void LogStrictLosDiagnostics(Floor floor, List<NodeKey> goals, Collider targetCollider,
+            InteractableObj target, string targetName)
+        {
+            if (Main.Log == null || target == null || targetCollider == null || goals == null) return;
+            try
+            {
+                var sb = new System.Text.StringBuilder();
+                sb.Append("[strict-los-diag] target=").Append(targetName ?? "<null>")
+                  .Append(" io=").Append(target.name)
+                  .Append(" ioHasCollider=").Append(target.GetComponent<Collider>() != null)
+                  .Append(" ioRigidbody=").Append(target.GetComponent<Rigidbody>() != null)
+                  .Append(" parentRigidbody=").Append(target.GetComponentInParent<Rigidbody>() != null)
+                  .Append(" chosenCollider=").Append(targetCollider.name)
+                  .Append(" bounds=").Append(targetCollider.bounds.center).Append("/").Append(targetCollider.bounds.size);
+                Collider[] cols = target.GetComponentsInChildren<Collider>(true);
+                sb.Append(" colliders=[");
+                for (int i = 0; i < cols.Length && i < 8; i++)
+                {
+                    Collider c = cols[i];
+                    if (i > 0) sb.Append(", ");
+                    sb.Append(c.name).Append(c.enabled ? "" : "(off)").Append(c.isTrigger ? "(trigger)" : "")
+                      .Append(" layer=").Append(c.gameObject.layer);
+                }
+                sb.Append("]");
+                Main.Log.LogInfo(sb.ToString());
+
+                // The 3 goal cells nearest the target.
+                var nearest = new List<KeyValuePair<float, NodeKey>>();
+                Vector3 tc = targetCollider.bounds.center;
+                for (int i = 0; i < goals.Count; i++)
+                {
+                    Vector2 xz = floor.CellToWorld(goals[i].Ix, goals[i].Iz);
+                    float d = new Vector2(xz.x - tc.x, xz.y - tc.z).sqrMagnitude;
+                    nearest.Add(new KeyValuePair<float, NodeKey>(d, goals[i]));
+                }
+                nearest.Sort((a, b) => a.Key.CompareTo(b.Key));
+                BetterPlayerControl bpc = BetterPlayerControl.Instance;
+                int mask = bpc != null ? ~(int)bpc.dateviatorIgnores : ~0;
+                for (int n = 0; n < nearest.Count && n < 3; n++)
+                {
+                    Vector2 xz = floor.CellToWorld(nearest[n].Value.Ix, nearest[n].Value.Iz);
+                    Vector3 eye = new Vector3(xz.x, floor.FloorY + InteractionEyeHeightM, xz.y);
+                    Vector3 dir = (tc - eye).normalized;
+                    Vector3 origin = eye - dir * 0.25f;
+                    RaycastHit[] hits = Physics.RaycastAll(new Ray(origin, dir), Vector3.Distance(origin, tc) + 2f, mask);
+                    Array.Sort(hits, (a, b) => a.distance.CompareTo(b.distance));
+                    var line = new System.Text.StringBuilder();
+                    line.Append("[strict-los-diag]   cell eye=").Append(eye).Append(" hits:");
+                    for (int h = 0; h < hits.Length && h < 4; h++)
+                    {
+                        Transform ht = hits[h].transform;
+                        InteractableObj hio = ht != null ? ht.GetComponent<InteractableObj>() : null;
+                        InteractableObj pio = hits[h].collider != null ? hits[h].collider.GetComponentInParent<InteractableObj>() : null;
+                        line.Append(" [").Append(hits[h].distance.ToString("0.00")).Append("m ")
+                            .Append(hits[h].collider != null ? hits[h].collider.name : "?")
+                            .Append(" transform=").Append(ht != null ? ht.name : "?")
+                            .Append(" io=").Append(hio != null ? hio.name : "-")
+                            .Append(" parentIo=").Append(pio != null ? pio.name : "-")
+                            .Append(hits[h].collider != null && hits[h].collider.isTrigger ? " trigger" : "")
+                            .Append("]");
+                    }
+                    Main.Log.LogInfo(line.ToString());
+                }
+            }
+            catch (Exception e)
+            {
+                Main.Log.LogWarning("[strict-los-diag] failed: " + e.Message);
             }
         }
 
