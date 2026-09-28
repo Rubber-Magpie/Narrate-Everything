@@ -3237,6 +3237,29 @@ namespace DateEverythingAccess
                         ? _tutorialFrontDoorField.GetValue(TutorialController.Instance) as GameObject
                         : null;
                     break;
+
+                case TutorialObjectiveKind.Dorian:
+                {
+                    // Every door in the house is Dorian (front door, back door, attic door, even the
+                    // crawlspace ladder), so "find Dorian" scored them all equally and could send the
+                    // player to the back door. The story means the FRONT door, and the game's own
+                    // TutorialController holds a reference to it: use that, as HouseExit does. Only
+                    // accept it if it really resolves to a Dorian interactable; otherwise fall back to
+                    // scoring (which also prefers the front door).
+                    EnsureReflectionCache();
+                    GameObject frontDoor = _tutorialFrontDoorField != null && TutorialController.Instance != null
+                        ? _tutorialFrontDoorField.GetValue(TutorialController.Instance) as GameObject
+                        : null;
+                    if (frontDoor != null &&
+                        TryResolveInteractableFromTutorialAnchor(frontDoor, out InteractableObj frontIo) &&
+                        frontIo != null &&
+                        string.Equals(NormalizeText(frontIo.InternalName()), "dorian", StringComparison.OrdinalIgnoreCase))
+                    {
+                        interactable = frontIo;
+                        return true;
+                    }
+                    return false;
+                }
             }
 
             if (anchorObject == null)
@@ -3382,6 +3405,9 @@ namespace DateEverythingAccess
                         score += 140f;
                     if (ContainsToken(objectLabel, "door"))
                         score += 40f;
+                    // All doors are Dorian; the objective means the front door. Break the tie.
+                    if (score > 0f && (ContainsToken(objectLabel, "front") || ContainsToken(sceneName, "front")))
+                        score += 100f;
                     break;
 
                 case TutorialObjectiveKind.Phone:
