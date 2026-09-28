@@ -1908,6 +1908,23 @@ namespace DateEverythingAccess
                 }
             }
 
+            // A CLOSED door in the way is not an obstacle to learn: open it and carry on along the
+            // same route. (Marking it would wall off the doorway for the blocker lifetime.) An OPEN
+            // door's swung leaf, by contrast, is a real obstacle and is learned below like furniture.
+            if (blocker != null)
+            {
+                Door swing = blocker.GetComponentInParent<Door>();
+                SlidingDoor slide = swing == null ? blocker.GetComponentInParent<SlidingDoor>() : null;
+                DoorPortal portal = swing != null ? DoorPortal.For(swing) : DoorPortal.For(slide);
+                if (portal != null && !portal.open && !portal.locked)
+                {
+                    Main.Log.LogInfo("SimpleNav stall recovery: closed door " + portal.gameObject.name +
+                        " in the way at player=" + FormatVector3(playerPos) + " — opening it instead of marking it blocked");
+                    portal.Interact();
+                    return true;
+                }
+            }
+
             // Never learn a staircase as an obstacle: marking stair cells would cut off a floor.
             SimpleNavWaypoint wp = SimpleNavBridge.ActiveWaypoint;
             bool nearStairs = (wp != null && wp.Kind == SimpleNavWaypointKind.Stairs) ||
