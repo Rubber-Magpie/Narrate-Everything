@@ -4177,8 +4177,9 @@ namespace DateEverythingAccess
                 // Room from the DATA HIERARCHY (House/<Room> or the per-room lighting container),
                 // NOT camera zones. Falls back to the room whose hierarchy-derived bounds contain
                 // the object only when the hierarchy puts it in a catch-all container.
-                if (!TryGetHierarchyRoomForInteractable(liveObj, out string zone))
-                    zone = ResolveRoomByBounds(fixturePos);
+                if (!TryGetDoorRoom(liveObj.transform, out string zone) &&
+                    !TryGetHierarchyRoomForInteractable(liveObj, out zone))
+                    zone = ResolveRoomByBounds(fixturePos, candidateFloor);
                 bool isDoor = IsDoorInteractable(liveObj);
 
                 // Datable grouping key for the collapsed top level — only for MET objects (the
@@ -4205,7 +4206,84 @@ namespace DateEverythingAccess
                 });
             }
 
+            if (!playerInCrawlspace)
+                AddUnrosteredPassageDoors(targets, playerTransform, playerPosition, playerFloorLabel);
+
             return targets.Count > 0 ? KnownObjectBuildResult.Ok : KnownObjectBuildResult.Empty;
+        }
+
+        // Passage doors the bake roster doesn't carry. The office door and office closet door were
+        // baked in their locked tutorial state, so the roster only has the (now inactive) locked
+        // copies and the real doors never reached the list. List every live, active passage door
+        // not already represented by a roster entry.
+        private void AddUnrosteredPassageDoors(List<KnownObjectTarget> targets, Transform playerTransform,
+            Vector3 playerPosition, string playerFloorLabel)
+        {
+            var listed = new HashSet<Component>();
+            for (int i = 0; i < targets.Count; i++)
+            {
+                Component d = FindDoorComponent(targets[i].Interactable);
+                if (d != null)
+                    listed.Add(d);
+            }
+
+            var doors = new List<Component>();
+            doors.AddRange(FindObjectsOfType<Door>());
+            doors.AddRange(FindObjectsOfType<SlidingDoor>());
+            var added = new List<string>();
+            for (int i = 0; i < doors.Count; i++)
+            {
+                Component door = doors[i];
+                if (door == null || !door.gameObject.activeInHierarchy || listed.Contains(door))
+                    continue;
+                InteractableObj io = door.GetComponent<InteractableObj>() ??
+                    door.GetComponentInChildren<InteractableObj>() ?? door.GetComponentInParent<InteractableObj>();
+                if (io == null || !io.gameObject.activeInHierarchy || !IsAlwaysListedDoor(io))
+                    continue;
+                if (FindDoorComponent(io) != door)
+                    continue;
+                listed.Add(door);
+
+                Vector3 pos = door.transform.position;
+                Renderer[] rends = door.GetComponentsInChildren<Renderer>();
+                if (rends != null && rends.Length > 0)
+                {
+                    Bounds b = rends[0].bounds;
+                    for (int r = 1; r < rends.Length; r++)
+                        if (rends[r] != null) b.Encapsulate(rends[r].bounds);
+                    pos = b.center;
+                }
+
+                SimpleNavPlanner.TryGetTargetFloorLabel(pos.y, out string floor);
+                bool onPlayerFloor = playerFloorLabel == null || floor == null ||
+                    string.Equals(floor, playerFloorLabel, StringComparison.OrdinalIgnoreCase);
+                string label = GetObjectFacingDisplayName(io);
+                if (string.IsNullOrWhiteSpace(label) ||
+                    string.Equals(label, Loc.Get("unknown_object"), StringComparison.OrdinalIgnoreCase))
+                {
+                    label = door.gameObject.name;
+                }
+                if (!TryGetDoorRoom(io.transform, out string zone) &&
+                    !TryGetHierarchyRoomForInteractable(io, out zone))
+                    zone = ResolveRoomByBounds(pos, floor);
+
+                targets.Add(new KnownObjectTarget
+                {
+                    Interactable = io,
+                    Label = label,
+                    Distance = playerTransform != null ? GetFlatDistance(playerPosition, pos) : 0f,
+                    FloorLabel = floor,
+                    IsOnPlayerFloor = onPlayerFloor,
+                    Section = PickerSection.Encountered,
+                    Zone = zone,
+                    CharacterName = null,
+                    IsDoor = true,
+                    DatableKey = null,
+                });
+                added.Add(door.gameObject.name + "->" + zone);
+            }
+            if (added.Count > 0 && Main.Log != null)
+                Main.Log.LogInfo("KnownObjectPicker: added unrostered passage doors: " + string.Join(", ", added));
         }
 
         // The set of room-container names the data hierarchy uses, mapped to the spoken room name.
@@ -4232,13 +4310,24 @@ namespace DateEverythingAccess
             var table = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             foreach (string r in rooms)
             {
-                string spoken = FriendlyRoomName(r);
+                string spoken = RoomSpokenName(r);
                 table[BuildComparisonKey(r)] = spoken;            // "House/Bedroom"
                 table[BuildComparisonKey("Lights_" + r)] = spoken; // "Lights_Bedroom" (lighting group)
             }
             // Light switches live under a single non-room container; they belong to "light switches".
             table[BuildComparisonKey("LightSwitches")] = FriendlyRoomName("LightSwitches");
             return table;
+        }
+
+        // Spoken room name for a room container. "Hallway" is the downstairs hall; say so, so it
+        // is never confused with the upstairs hall.
+        private static string RoomSpokenName(string container)
+        {
+            if (string.Equals(container, "Hallway", StringComparison.OrdinalIgnoreCase))
+                return Loc.Get("room_downstairs_hall");
+            if (string.Equals(container, "UpstairsHall", StringComparison.OrdinalIgnoreCase))
+                return Loc.Get("room_upstairs_hall");
+            return FriendlyRoomName(container);
         }
 
         // "LivingRoom" -> "Living room", "Bathroom1" -> "Bathroom 1", "LightSwitches" -> "Light
@@ -4353,6 +4442,67 @@ namespace DateEverythingAccess
         // containers). Returns null when no room bounds exist.
         private string ResolveRoomByBounds(Vector3 position)
         {
+            SimpleNavPlanner.TryGetTargetFloorLabel(position.y, out string floor);
+            return ResolveRoomByBounds(position, floor);
+        }
+
+        // Which floor each room is on. Room bounds are unions of renderer bounds and can reach
+        // through the ceiling (the kitchen's volume contains the gym doors above it), so the
+        // spatial fallback only considers rooms on the object's own floor.
+        private static readonly Dictionary<string, string> _roomFloors = BuildRoomFloorTable();
+
+        private static Dictionary<string, string> BuildRoomFloorTable()
+        {
+            var t = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (string r in new[] { "Kitchen", "Office", "LivingRoom", "LaundryRoom", "Bathroom1", "DiningRoom", "Hallway", "PianoRoom" })
+                t[RoomSpokenName(r)] = "ground";
+            foreach (string r in new[] { "Gym", "Bedroom", "Bathroom2", "Attic", "UpstairsHall" })
+                t[RoomSpokenName(r)] = "upper";
+            return t;
+        }
+
+        // Passage doors all live under House/MultiRoom/Doors, which names no room, so each is
+        // assigned explicitly to the room you reach it from (hallway doors in the hallway, closet
+        // doors in their room). Keyed by the door's container name; nearest ancestor wins.
+        private static readonly Dictionary<string, string> _doorRoomNames = BuildDoorRoomTable();
+
+        private static Dictionary<string, string> BuildDoorRoomTable()
+        {
+            var t = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            void Map(string room, params string[] doors)
+            {
+                foreach (string d in doors)
+                    t[BuildComparisonKey(d)] = RoomSpokenName(room);
+            }
+            Map("Office", "Doors_Office_Closet", "Doors_Office_ClosetLocked", "OfficeDoorsCloset");
+            Map("Hallway", "Doors_Office", "Doors_Office_Locked", "OfficeDoors", "FrontDoor",
+                "Doors_FrontDoor", "Doors_FrontDoor_Broken", "Doors_Bathroom1");
+            Map("Kitchen", "Doors_Laundry");
+            Map("LaundryRoom", "Doors_Laundry_Closet");
+            Map("PianoRoom", "SM_Door_Back_Frame", "BackDoorPivot");
+            Map("UpstairsHall", "Doors_Bedroom", "Doors_Gym_Hall", "Doors_UpperHall_Electric",
+                "AtticDoors", "Doors_Attic_Unlocked", "Doors_Attic_Locked");
+            Map("Bedroom", "Doors_Bedroom_Bathroom", "Doors_Bedroom_ClosetLeft_Inner",
+                "Doors_Bedroom_ClosetLeft_Outer", "Doors_Bedroom_ClosetRight_Inner",
+                "Doors_Bedroom_ClosetRight_Outer");
+            Map("Gym", "Doors_Gym_Bathroom", "Doors_Gym_ClosetInner", "Doors_Gym_ClosetOuter");
+            return t;
+        }
+
+        private static bool TryGetDoorRoom(Transform from, out string room)
+        {
+            room = null;
+            Transform current = from;
+            for (int depth = 0; current != null && depth < 12; depth++, current = current.parent)
+            {
+                if (_doorRoomNames.TryGetValue(BuildComparisonKey(current.name), out room))
+                    return true;
+            }
+            return false;
+        }
+
+        private string ResolveRoomByBounds(Vector3 position, string floor)
+        {
             if (_roomBoundsIndex == null || _roomBoundsIndex.Count == 0)
                 return null;
             string containing = null;
@@ -4360,6 +4510,12 @@ namespace DateEverythingAccess
             float nearestSqr = float.PositiveInfinity;
             foreach (KeyValuePair<string, Bounds> kv in _roomBoundsIndex)
             {
+                if (!string.IsNullOrEmpty(floor) &&
+                    _roomFloors.TryGetValue(kv.Key, out string roomFloor) &&
+                    !string.Equals(roomFloor, floor, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
                 if (kv.Value.Contains(position))
                 {
                     // A containing room wins outright; if several contain it (overlapping floors),
@@ -4908,17 +5064,25 @@ namespace DateEverythingAccess
         }
 
         private static readonly string[] ContainerDoorWords =
-            { "cupboard", "kithcen_cupboard", "fridge", "cabinet", "drawer", "oven", "microwave", "dishwasher", "washer", "dryer", "locker" };
+            { "cupboard", "kithcen_cupboard", "fridge", "cabinet", "drawer", "oven", "microwave", "dishwasher", "washer", "dryer", "locker", "shower", "breakerbox", "emptyreggie" };
+
+        // The Door/SlidingDoor behind an interactable (self, parent or children), or null.
+        private static Component FindDoorComponent(InteractableObj interactable)
+        {
+            if (interactable == null || interactable.gameObject == null)
+                return null;
+            GameObject go = interactable.gameObject;
+            return (Component)go.GetComponent<Door>() ?? go.GetComponentInParent<Door>() ??
+                (Component)go.GetComponentInChildren<Door>() ?? go.GetComponent<SlidingDoor>() ??
+                (Component)go.GetComponentInParent<SlidingDoor>() ?? go.GetComponentInChildren<SlidingDoor>();
+        }
 
         // A passage door (room, closet, front/back door) — always shown in the known-objects list.
         private static bool IsAlwaysListedDoor(InteractableObj interactable)
         {
             if (interactable == null || interactable.gameObject == null)
                 return false;
-            GameObject go = interactable.gameObject;
-            Component door = (Component)go.GetComponent<Door>() ?? go.GetComponentInParent<Door>() ??
-                (Component)go.GetComponentInChildren<Door>() ?? go.GetComponent<SlidingDoor>() ??
-                (Component)go.GetComponentInParent<SlidingDoor>() ?? go.GetComponentInChildren<SlidingDoor>();
+            Component door = FindDoorComponent(interactable);
             if (door == null)
                 return false;
             string name = door.gameObject.name ?? string.Empty;
