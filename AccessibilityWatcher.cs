@@ -7710,10 +7710,23 @@ namespace DateEverythingAccess
                 return false;
 
             TMP_InputField inputField = selectedObject.GetComponentInParent<TMP_InputField>();
+            bool onProxy = false;
+            if (!IsValidateQuestionsField(inputField))
+            {
+                // Before the player presses Enter, focus sits on the field's "Proxy" wrapper (a
+                // button that CONTAINS the input field), not on the input field itself. Without this
+                // the generic reader spoke only the value ("Cricket") with no field name.
+                TMP_InputField inner = selectedObject.GetComponentInChildren<TMP_InputField>(true);
+                if (IsValidateQuestionsField(inner))
+                {
+                    inputField = inner;
+                    onProxy = true;
+                }
+            }
             if (IsValidateQuestionsField(inputField))
             {
-                announcement = BuildValidateQuestionsInputAnnouncement(inputField);
-                branch = "new_game_input";
+                announcement = BuildValidateQuestionsInputAnnouncement(inputField, includeSmallPrint: onProxy);
+                branch = onProxy ? "new_game_input_proxy" : "new_game_input";
                 return !string.IsNullOrEmpty(announcement);
             }
 
@@ -7754,15 +7767,84 @@ namespace DateEverythingAccess
 
         private static string BuildValidateQuestionsInputAnnouncement(TMP_InputField inputField)
         {
-            string label = GetValidateQuestionsFieldLabel(inputField);
+            return BuildValidateQuestionsInputAnnouncement(inputField, includeSmallPrint: false);
+        }
+
+        // "<prompt>. <value>[. <small print>]". The prompt is the text the FORM itself prints for
+        // the field ("Name", "City of Residence"), falling back to the mod's own label.
+        private static string BuildValidateQuestionsInputAnnouncement(TMP_InputField inputField, bool includeSmallPrint)
+        {
+            string label = null, smallPrint = null;
+            if (inputField != null && ValidateQuestions.Instance != null)
+                TryGetFormPrompt(inputField.transform, ValidateQuestions.Instance.transform, null, out label, out smallPrint);
+            if (string.IsNullOrEmpty(label))
+                label = GetValidateQuestionsFieldLabel(inputField);
+
             string value = NormalizeText(inputField != null ? inputField.text : null);
             if (string.IsNullOrEmpty(value))
                 value = Loc.Get("new_game_field_empty");
 
-            if (string.IsNullOrEmpty(label))
-                return value;
+            string result = string.IsNullOrEmpty(label) ? value : label + ". " + value;
+            if (includeSmallPrint && !string.IsNullOrEmpty(smallPrint))
+                result += ". " + smallPrint;
+            return result;
+        }
 
-            return label + ". " + value;
+        // The prompt a form prints for a control: walk up from `from` to the nearest ancestor whose
+        // name ends in "Label" (the form groups each question as "<Question> Label"), or to
+        // `container` when given, and read its visible texts in reading order, skipping texts that
+        // belong to an input field or to another toggle. First text = the prompt, the rest = small print.
+        private static bool TryGetFormPrompt(Transform from, Transform root, Transform container, out string label, out string smallPrint)
+        {
+            return TryGetFormPrompt(from, root, container, true, out label, out smallPrint);
+        }
+
+        private static bool TryGetFormPrompt(Transform from, Transform root, Transform container, bool includeOwnToggle,
+            out string label, out string smallPrint)
+        {
+            label = null; smallPrint = null;
+            Transform group = container;
+            if (group == null)
+            {
+                for (Transform a = from; a != null && a != root; a = a.parent)
+                {
+                    if (a.name.EndsWith("Label", StringComparison.OrdinalIgnoreCase)) { group = a; break; }
+                }
+            }
+            if (group == null) return false;
+
+            Toggle ownToggle = includeOwnToggle && from != null ? from.GetComponentInParent<Toggle>() : null;
+            var found = new List<KeyValuePair<Vector2, string>>();
+            Vector3[] tc = new Vector3[4];
+            TMP_Text[] texts = group.GetComponentsInChildren<TMP_Text>(false);
+            for (int i = 0; i < texts.Length; i++)
+            {
+                TMP_Text t = texts[i];
+                if (t == null || !t.enabled || !t.gameObject.activeInHierarchy) continue;
+                if (t.GetComponentInParent<TMP_InputField>() != null) continue;
+                Toggle owner = t.GetComponentInParent<Toggle>();
+                if (owner != null && owner != ownToggle) continue;
+                string text = NormalizeText(t.text);
+                if (string.IsNullOrEmpty(text)) continue;
+                t.rectTransform.GetWorldCorners(tc);
+                found.Add(new KeyValuePair<Vector2, string>(new Vector2(tc[0].x, tc[1].y), text));
+            }
+            if (found.Count == 0) return false;
+            found.Sort((a, b) =>
+            {
+                int byY = b.Key.y.CompareTo(a.Key.y);
+                return byY != 0 ? byY : a.Key.x.CompareTo(b.Key.x);
+            });
+            var parts = new List<string>();
+            for (int i = 0; i < found.Count; i++)
+            {
+                string v = found[i].Value.TrimEnd('.', ' ');
+                if (!parts.Contains(v)) parts.Add(v);
+            }
+            label = parts[0];
+            if (parts.Count > 1)
+                smallPrint = string.Join(". ", parts.GetRange(1, parts.Count - 1).ToArray());
+            return true;
         }
 
         private static string GetValidateQuestionsFieldLabel(TMP_InputField inputField)
@@ -7791,10 +7873,14 @@ namespace DateEverythingAccess
             {
                 string optionLabel = GetValidateQuestionsPronounOptionLabel(toggle);
                 string state = Loc.Get(toggle.isOn ? "new_game_toggle_selected" : "new_game_toggle_not_selected");
+                string prompt = Loc.Get("new_game_field_pronouns");
+                if (TryGetFormPrompt(toggle.transform, ValidateQuestions.Instance.transform, null, false, out string printed, out _) &&
+                    !string.IsNullOrEmpty(printed))
+                    prompt = printed;
                 if (string.IsNullOrEmpty(optionLabel))
-                    return Loc.Get("new_game_field_pronouns") + ". " + state;
+                    return prompt + ". " + state;
 
-                return Loc.Get("new_game_field_pronouns") + ". " + optionLabel + ". " + state;
+                return prompt + ". " + optionLabel + ". " + state;
             }
 
             if (toggle == ValidateQuestions.Instance.mandatoryToggle)
@@ -7803,7 +7889,18 @@ namespace DateEverythingAccess
                 // Read the small print printed beside the box ("CHECK THIS BOX. Required to show you
                 // are committed to jumping through hoops when asked.") — the form has no field for it,
                 // so it is found by position; see FindTextBesideToggle.
-                string beside = FindTextBesideToggle(toggle, ValidateQuestions.Instance.transform);
+                // The box and its text share a parent group ("RandomCheckbox"); read that group.
+                // Position-based search is the fallback.
+                string beside = null;
+                if (TryGetFormPrompt(toggle.transform, ValidateQuestions.Instance.transform,
+                        toggle.transform.parent, out string groupLabel, out string groupSmall))
+                    beside = string.IsNullOrEmpty(groupSmall) ? groupLabel : groupLabel + ". " + groupSmall;
+                if (string.IsNullOrEmpty(beside))
+                    beside = FindTextBesideToggle(toggle, ValidateQuestions.Instance.transform);
+                // The wording is painted onto the form's paper texture, so usually there is no text
+                // object to find; speak the mod's copy of it.
+                if (string.IsNullOrEmpty(beside))
+                    beside = Loc.Get("new_game_confirm_small_print");
                 if (!string.IsNullOrEmpty(beside))
                     return Loc.Get("new_game_field_confirmation") + ". " + beside + ". " + state;
                 return Loc.Get("new_game_field_confirmation") + ". " + state;

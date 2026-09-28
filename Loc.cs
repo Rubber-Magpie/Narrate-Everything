@@ -180,10 +180,12 @@ namespace DateEverythingAccess
             Add("apply_display_settings", "Apply display settings");
             Add("controls_unbound", "unbound");
             Add("new_game_field_name", "Name");
-            Add("new_game_field_town", "Town");
+            Add("new_game_field_town", "City of Residence");
             Add("new_game_field_favorite_thing", "Favorite thing");
-            Add("new_game_field_pronouns", "Pronouns");
+            Add("new_game_field_pronouns", "Preferred Pronouns");
             Add("new_game_field_confirmation", "Confirmation");
+            // Printed on the form's paper texture beside the checkbox (not a text object the mod can read).
+            Add("new_game_confirm_small_print", "Check this box. Required to show you are committed to jump through hoops when asked.");
             Add("new_game_field_empty", "Empty");
             Add("new_game_toggle_selected", "Selected");
             Add("new_game_toggle_not_selected", "Not selected");
@@ -396,10 +398,11 @@ namespace DateEverythingAccess
             AddJa("apply_display_settings", "表示設定を適用");
             AddJa("controls_unbound", "未割り当て");
             AddJa("new_game_field_name", "名前");
-            AddJa("new_game_field_town", "町");
+            AddJa("new_game_field_town", "居住地");
             AddJa("new_game_field_favorite_thing", "好きなもの");
             AddJa("new_game_field_pronouns", "代名詞");
             AddJa("new_game_field_confirmation", "確認");
+            AddJa("new_game_confirm_small_print", "このボックスにチェックを入れてください。求められたときに無理難題にも応じる覚悟があることを示すために必要です。");
             AddJa("new_game_field_empty", "空");
             AddJa("new_game_toggle_selected", "選択中");
             AddJa("new_game_toggle_not_selected", "未選択");
