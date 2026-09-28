@@ -1529,6 +1529,26 @@ namespace DateEverythingAccess
         private const float RuntimeBlockerKeepClearAroundPlayerM = 0.35f;
         private const float RuntimeBlockerMaxFloorOffsetM = 0.6f;
 
+        // Drop every learned blocker (all floors). Returns how many cells were cleared. Used as a
+        // safety valve when a plan fails: learned blockers are guesses from past stalls, and a
+        // cluster of them around a doorway can box the player in (observed: laundry closet).
+        public static int ClearRuntimeBlockers()
+        {
+            if (_floors == null) return 0;
+            int cleared = 0;
+            for (int i = 0; i < _floors.Count; i++)
+            {
+                Floor f = _floors[i];
+                if (f.RuntimeBlockedUntil.Count == 0) continue;
+                cleared += f.RuntimeBlockedUntil.Count;
+                f.RuntimeBlockedUntil.Clear();
+                f.InvalidateClearance();
+            }
+            if (cleared > 0 && Main.Log != null)
+                Main.Log.LogInfo("SimpleNavPlanner.ClearRuntimeBlockers: cleared " + cleared + " learned blocker cells");
+            return cleared;
+        }
+
         private static void PruneRuntimeBlockers()
         {
             if (_floors == null) return;

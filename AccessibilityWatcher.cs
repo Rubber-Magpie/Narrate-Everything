@@ -5016,6 +5016,15 @@ namespace DateEverythingAccess
                     0,
                     targetIsDatable: false,
                     targetInkFileName: null);
+                if (worldRoute == null && SimpleNavPlanner.ClearRuntimeBlockers() > 0)
+                    worldRoute = SimpleNavPlanner.Plan(
+                        worldStartPos,
+                        _navigationWorldTarget,
+                        _navigationWorldTargetRadius > 0f ? _navigationWorldTargetRadius : 1.25f,
+                        worldLabel,
+                        0,
+                        targetIsDatable: false,
+                        targetInkFileName: null);
                 if (worldRoute == null)
                 {
                     SimpleNavPlanner.PlanFailure why = SimpleNavPlanner.LastFailure;
@@ -5051,6 +5060,10 @@ namespace DateEverythingAccess
 
             bool isDatable = !string.IsNullOrWhiteSpace(target.inkFileName);
             SimpleNavRoute route = SimpleNavPlanner.Plan(startPos, targetPos, radius, goName, goId, isDatable, target.inkFileName);
+            // Learned blockers can box the player in; if they exist and the plan failed, forget them
+            // and try once more before reporting no path.
+            if (route == null && SimpleNavPlanner.ClearRuntimeBlockers() > 0)
+                route = SimpleNavPlanner.Plan(startPos, targetPos, radius, goName, goId, isDatable, target.inkFileName);
             if (route == null)
             {
                 // MULTI-PART DATABLE RETRY. A datable is often a whole assembly of InteractableObj
