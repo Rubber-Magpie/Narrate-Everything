@@ -788,6 +788,13 @@ namespace DateEverythingAccess
         /// <summary>Returns true if the bake is loaded and the planner is ready.</summary>
         public static bool IsReady => EnsureLoaded();
 
+        // True for doors the bake records as operability-only CONTAINER doors (cupboards, fridge,
+        // cabinets) rather than passage doors.
+        public static bool IsContainerDoorName(string name)
+        {
+            return !string.IsNullOrEmpty(name) && EnsureLoaded() && _containerDoorNames.Contains(name);
+        }
+
         // Resolve the floor a player STANDING at world Y belongs to (start-floor rule), as a
         // stable string label (e.g. "ground"/"upper"). Used by the object picker to bucket
         // candidates by floor before sorting by XZ distance, so cross-floor items don't read

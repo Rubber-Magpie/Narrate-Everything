@@ -4132,8 +4132,13 @@ namespace DateEverythingAccess
                 // examined) appear, plus the seeded startup office door. The roster defines what
                 // EXISTS; this narrows it to what THIS SAVE knows. Skipped when includeUnencountered
                 // is set (F6 room scan): the spatial gates there already model "what's perceivable."
+                // Doors (rooms, closets, the front door) are always listed: they are the house's
+                // landmarks, and a door you have not opened yet (the office closet) is exactly the
+                // thing you need to be able to walk to. Everything else appears only once
+                // encountered. Container doors (cupboards, fridge) count as objects, not doors.
                 if (!includeUnencountered &&
                     !IsStartupOfficeDoorObject(liveObj, fixture.name) &&
+                    !IsAlwaysListedDoor(liveObj) &&
                     !IsEncounteredKnownObject(liveObj))
                 {
                     continue;
@@ -4900,6 +4905,29 @@ namespace DateEverythingAccess
             {
                 return false;
             }
+        }
+
+        private static readonly string[] ContainerDoorWords =
+            { "cupboard", "kithcen_cupboard", "fridge", "cabinet", "drawer", "oven", "microwave", "dishwasher", "washer", "dryer", "locker" };
+
+        // A passage door (room, closet, front/back door) — always shown in the known-objects list.
+        private static bool IsAlwaysListedDoor(InteractableObj interactable)
+        {
+            if (interactable == null || interactable.gameObject == null)
+                return false;
+            GameObject go = interactable.gameObject;
+            Component door = (Component)go.GetComponent<Door>() ?? go.GetComponentInParent<Door>() ??
+                (Component)go.GetComponentInChildren<Door>() ?? go.GetComponent<SlidingDoor>() ??
+                (Component)go.GetComponentInParent<SlidingDoor>() ?? go.GetComponentInChildren<SlidingDoor>();
+            if (door == null)
+                return false;
+            string name = door.gameObject.name ?? string.Empty;
+            if (SimpleNavPlanner.IsContainerDoorName(name))
+                return false;
+            for (int i = 0; i < ContainerDoorWords.Length; i++)
+                if (name.IndexOf(ContainerDoorWords[i], StringComparison.OrdinalIgnoreCase) >= 0)
+                    return false;
+            return true;
         }
 
         private static bool IsDoorInteractable(InteractableObj interactable)
