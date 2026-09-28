@@ -7800,10 +7800,74 @@ namespace DateEverythingAccess
             if (toggle == ValidateQuestions.Instance.mandatoryToggle)
             {
                 string state = Loc.Get(toggle.isOn ? "settings_value_on" : "settings_value_off");
+                // Read the small print printed beside the box ("CHECK THIS BOX. Required to show you
+                // are committed to jumping through hoops when asked.") — the form has no field for it,
+                // so it is found by position; see FindTextBesideToggle.
+                string beside = FindTextBesideToggle(toggle, ValidateQuestions.Instance.transform);
+                if (!string.IsNullOrEmpty(beside))
+                    return Loc.Get("new_game_field_confirmation") + ". " + beside + ". " + state;
                 return Loc.Get("new_game_field_confirmation") + ". " + state;
             }
 
             return null;
+        }
+
+        // Text laid out immediately to the RIGHT of a toggle, on its lines (a label or its small
+        // print), in reading order. Searches `root` for visible TMP texts that are not part of an
+        // input field or of another toggle, whose left edge sits just right of the box and whose
+        // vertical centre falls within a few box-heights of it. Null when nothing qualifies.
+        private static string _lastLoggedBesideText;
+
+        private static string FindTextBesideToggle(Toggle toggle, Transform root)
+        {
+            if (toggle == null || root == null) return null;
+            RectTransform box = toggle.transform as RectTransform;
+            if (box == null) return null;
+            Vector3[] bc = new Vector3[4];
+            box.GetWorldCorners(bc); // 0=bottom-left, 1=top-left, 2=top-right, 3=bottom-right
+            float boxLeft = bc[0].x, boxRight = bc[2].x, boxBottom = bc[0].y, boxTop = bc[1].y;
+            float h = Mathf.Max(0.0001f, boxTop - boxBottom);
+
+            var found = new List<KeyValuePair<Vector2, string>>();
+            TMP_Text[] texts = root.GetComponentsInChildren<TMP_Text>(false);
+            Vector3[] tc = new Vector3[4];
+            for (int i = 0; i < texts.Length; i++)
+            {
+                TMP_Text t = texts[i];
+                if (t == null || !t.enabled || !t.gameObject.activeInHierarchy) continue;
+                string text = NormalizeText(t.text);
+                if (string.IsNullOrEmpty(text)) continue;
+                if (t.GetComponentInParent<TMP_InputField>() != null) continue;
+                Toggle owner = t.GetComponentInParent<Toggle>();
+                if (owner != null && owner != toggle) continue;
+
+                t.rectTransform.GetWorldCorners(tc);
+                float left = tc[0].x, bottom = tc[0].y, top = tc[1].y;
+                float centerY = (top + bottom) * 0.5f;
+                bool ownChild = owner == toggle;
+                bool rightOfBox = left >= boxLeft - h * 0.5f && left - boxRight <= h * 4f;
+                bool onBoxLines = centerY <= boxTop + h * 1.5f && centerY >= boxBottom - h * 3f;
+                if (ownChild || (rightOfBox && onBoxLines))
+                    found.Add(new KeyValuePair<Vector2, string>(new Vector2(left, top), text));
+            }
+            if (found.Count == 0) return null;
+
+            // Reading order: top to bottom, then left to right.
+            found.Sort((a, b) =>
+            {
+                int byY = b.Key.y.CompareTo(a.Key.y);
+                return byY != 0 ? byY : a.Key.x.CompareTo(b.Key.x);
+            });
+            var parts = new List<string>();
+            for (int i = 0; i < found.Count; i++)
+                if (!parts.Contains(found[i].Value)) parts.Add(found[i].Value.TrimEnd('.'));
+            string joined = string.Join(". ", parts.ToArray());
+            if (!string.Equals(joined, _lastLoggedBesideText, StringComparison.Ordinal))
+            {
+                _lastLoggedBesideText = joined;
+                Main.Log?.LogInfo("FindTextBesideToggle: " + toggle.gameObject.name + " -> \"" + joined + "\"");
+            }
+            return joined;
         }
 
         private static bool IsValidateQuestionsPronounToggle(Toggle toggle)
