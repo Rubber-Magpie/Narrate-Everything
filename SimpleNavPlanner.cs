@@ -1131,6 +1131,7 @@ namespace DateEverythingAccess
             _lockedDoorNames.Clear();
             _bakedDoorNames.Clear();
             _containerDoorNames.Clear();
+            _swingPassageDoorNames.Clear();
             for (int fi = 0; fi < _bake.floors.Length; fi++)
             {
                 BakeFloor raw = _bake.floors[fi];
@@ -1151,6 +1152,9 @@ namespace DateEverythingAccess
                             _containerDoorNames.Add(d.name);
                         else
                             _bakedDoorNames.Add(d.name);
+                        if (!d.container_operable_only &&
+                            string.Equals(d.kind, "Door", StringComparison.Ordinal))
+                            _swingPassageDoorNames.Add(d.name);
                         // Locked is authoritative regardless of record ordering.
                         if (d.locked) _lockedDoorNames.Add(d.name);
                         if (d.freed_cells != null)
@@ -3203,11 +3207,113 @@ namespace DateEverythingAccess
             for (int i = 0; i < doors.Count; i++)
             {
                 if (!floor.DoorCrossingByName.TryGetValue(doors[i], out Vector3 c)) continue;
+                if (TryGetSwingDoorwayCentre(floor, doors[i], c, out Vector3 centred))
+                {
+                    Main.Log?.LogInfo($"SimpleNavPlanner doorway centre door={doors[i]} baked=({c.x:F2}, {c.z:F2}) centred=({centred.x:F2}, {centred.z:F2})");
+                    c = centred;
+                }
                 float t = ProjectParamXZ(a, b, c);
                 if (t <= 0.05f || t >= 0.95f) continue;          // must be genuinely between a and b
                 if (t > bestT) { bestT = t; opening = new Vector3(c.x, a.y, c.z); found = true; }
             }
             return found;
+        }
+
+        // Names of hinged (swinging) passage doors, from the bake's doors[*].kind.
+        private static readonly HashSet<string> _swingPassageDoorNames = new HashSet<string>(StringComparer.Ordinal);
+        private const int DoorwayCentreCapCells = 4;
+
+        // The middle of a swinging door's walkable gap, from the LIVE grid. The baked crossing
+        // centroid mixes in the threshold cells, which sit on the hinge side, so it lands up to a
+        // metre off-centre, right against the jamb and the open leaf (the bedroom door snag: the
+        // waypoint sat 0.4 m from the hinge edge of the gap and the 0.8 m capsule caught it).
+        // Take the door's freed cells that are walkable now, keep the largest connected piece,
+        // and average the cells farthest from anything blocked (capped at 0.8 m, so a wide gap
+        // averages to its middle line). Sliding doors keep the baked point.
+        private static bool TryGetSwingDoorwayCentre(Floor floor, string door, Vector3 baked, out Vector3 centre)
+        {
+            centre = baked;
+            if (floor == null || string.IsNullOrEmpty(door) || !_swingPassageDoorNames.Contains(door))
+                return false;
+            if (!floor.DoorFreedByName.TryGetValue(door, out HashSet<long> freed) || freed.Count == 0)
+                return false;
+
+            var cand = new HashSet<long>();
+            int x0 = int.MaxValue, x1 = int.MinValue, z0 = int.MaxValue, z1 = int.MinValue;
+            foreach (long p in freed)
+            {
+                int ix = (int)(p >> 32), iz = (int)(uint)p;
+                if (!floor.Navigable(ix, iz)) continue;
+                cand.Add(p);
+                if (ix < x0) x0 = ix; if (ix > x1) x1 = ix;
+                if (iz < z0) z0 = iz; if (iz > z1) z1 = iz;
+            }
+            if (cand.Count == 0) return false;
+
+            // Largest 4-connected piece of the walkable freed cells.
+            var seen = new HashSet<long>();
+            List<long> main = null;
+            foreach (long start in cand)
+            {
+                if (seen.Contains(start)) continue;
+                var comp = new List<long>();
+                var stack = new Stack<long>();
+                stack.Push(start); seen.Add(start);
+                while (stack.Count > 0)
+                {
+                    long c = stack.Pop(); comp.Add(c);
+                    int cx = (int)(c >> 32), cz = (int)(uint)c;
+                    long[] ns = { Floor.PackCell(cx + 1, cz), Floor.PackCell(cx - 1, cz), Floor.PackCell(cx, cz + 1), Floor.PackCell(cx, cz - 1) };
+                    for (int k = 0; k < ns.Length; k++)
+                        if (cand.Contains(ns[k]) && seen.Add(ns[k])) stack.Push(ns[k]);
+                }
+                if (main == null || comp.Count > main.Count) main = comp;
+            }
+
+            // Distance to the nearest blocked cell (4-connected, capped) over a window around it.
+            int cap = DoorwayCentreCapCells;
+            int wx0 = x0 - cap - 1, wz0 = z0 - cap - 1;
+            int w = (x1 - x0) + 2 * cap + 3, h = (z1 - z0) + 2 * cap + 3;
+            int[,] dist = new int[w, h];
+            var q = new Queue<int>();
+            for (int i = 0; i < w; i++)
+                for (int j = 0; j < h; j++)
+                {
+                    if (!floor.Navigable(wx0 + i, wz0 + j)) { dist[i, j] = 0; q.Enqueue(i * h + j); }
+                    else dist[i, j] = cap;
+                }
+            while (q.Count > 0)
+            {
+                int cell = q.Dequeue(); int i = cell / h, j = cell % h; int dd = dist[i, j];
+                if (dd >= cap) continue;
+                if (i + 1 < w && dist[i + 1, j] > dd + 1) { dist[i + 1, j] = dd + 1; q.Enqueue((i + 1) * h + j); }
+                if (i - 1 >= 0 && dist[i - 1, j] > dd + 1) { dist[i - 1, j] = dd + 1; q.Enqueue((i - 1) * h + j); }
+                if (j + 1 < h && dist[i, j + 1] > dd + 1) { dist[i, j + 1] = dd + 1; q.Enqueue(i * h + j + 1); }
+                if (j - 1 >= 0 && dist[i, j - 1] > dd + 1) { dist[i, j - 1] = dd + 1; q.Enqueue(i * h + j - 1); }
+            }
+
+            int best = -1;
+            double sx = 0, sz = 0; int n = 0;
+            foreach (long c in main)
+            {
+                int cx = (int)(c >> 32), cz = (int)(uint)c;
+                int d = dist[cx - wx0, cz - wz0];
+                if (d > best) { best = d; sx = 0; sz = 0; n = 0; }
+                if (d == best)
+                {
+                    Vector2 wp = floor.CellToWorld(cx, cz);
+                    sx += wp.x; sz += wp.y; n++;
+                }
+            }
+            if (n == 0 || best <= 0) return false;
+            var result = new Vector3((float)(sx / n), baked.y, (float)(sz / n));
+            // Sanity: stay near the baked crossing (the same doorway), and on a walkable cell.
+            float ddx = result.x - baked.x, ddz = result.z - baked.z;
+            if (ddx * ddx + ddz * ddz > 2.0f * 2.0f) return false;
+            floor.WorldToCell(result.x, result.z, out int rix, out int riz);
+            if (!floor.Navigable(rix, riz)) return false;
+            centre = result;
+            return true;
         }
 
         private static float ProjectParamXZ(Vector3 a, Vector3 b, Vector3 p)
@@ -3648,6 +3754,8 @@ namespace DateEverythingAccess
             // TagDoors's destination rule (target IS this door), like any object you open in
             // range. See [[project_navigation_container_open_on_interact]].
             [DataMember] public bool container_operable_only;
+            // "Door" (hinged leaf) or "SlidingDoor". Optional.
+            [DataMember] public string kind;
         }
 
         [DataContract]
