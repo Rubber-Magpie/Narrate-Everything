@@ -1075,6 +1075,8 @@ namespace DateEverythingAccess
         // Offline check against the shipped bake: with every unlocked door open, this removes ~685
         // ground and ~377 upper cells and disconnects no area on either floor.
         private const int LeafExtraMarginCells = 2;
+        // Pad around a live open sliding panel's collider bounds (the bake's own capsule margin).
+        private const float SliderPanelPadM = 0.4f;
 
         private static void WidenPassageDoorLeaves()
         {
@@ -1386,6 +1388,33 @@ namespace DateEverythingAccess
             }
             totalFreed += openableFreed;
 
+            // OPEN SLIDING PANELS. A sliding door does not vanish when opened: its panel slides over
+            // the other half of the opening. The bake has no open-panel footprint for sliders
+            // (open_blocked_cells is empty for every slider), so routes went straight through the
+            // slid panel and the player stalled against it (Doors_Gym_ClosetInner). Block the LIVE
+            // footprint of every open slider panel so the route takes the half that is actually open.
+            int sliderPanelCells = 0;
+            for (int i = 0; i < sliders.Length; i++)
+            {
+                SlidingDoor door = sliders[i];
+                if (door == null || !door.open) continue;
+                Collider[] cols = door.GetComponentsInChildren<Collider>();
+                for (int c = 0; c < cols.Length; c++)
+                {
+                    Collider col = cols[c];
+                    if (col == null || !col.enabled || col.isTrigger) continue;
+                    Bounds b = col.bounds;
+                    Floor f = FloorForY(b.min.y, FloorMatchToleranceM + 1.0f);
+                    if (f == null) continue;
+                    f.WorldToCell(b.min.x - SliderPanelPadM, b.min.z - SliderPanelPadM, out int ix0, out int iz0);
+                    f.WorldToCell(b.max.x + SliderPanelPadM, b.max.z + SliderPanelPadM, out int ix1, out int iz1);
+                    for (int ix = ix0; ix <= ix1; ix++)
+                        for (int iz = iz0; iz <= iz1; iz++)
+                            if (f.InBounds(ix, iz) && f.ExtraBlocked.Add(Floor.PackCell(ix, iz)))
+                                sliderPanelCells++;
+                }
+            }
+
             // Navigability just changed (overlay rebuilt) — the clearance map is stale.
             // Mirror plan_object_route.py _rebuild_extra_navigable nulling floor._clearance.
             for (int i = 0; i < _floors.Count; i++)
@@ -1395,7 +1424,7 @@ namespace DateEverythingAccess
                 Main.Log.LogInfo("SimpleNavPlanner.ApplyLiveDoorState: doors=" + totalDoorsFound +
                     " (hinges=" + hinges.Length + " sliders=" + sliders.Length + ")" +
                     " open=" + totalDoorsOpen + " matched=" + totalDoorsMatched + " unmatched=" + totalDoorsUnmatched +
-                    " | openableFreed=" + openableFreed + " lockedDoors=" + _lockedDoorNames.Count + " liveLocked=" + CountLiveLocked() +
+                    " | openableFreed=" + openableFreed + " sliderPanelCells=" + sliderPanelCells + " lockedDoors=" + _lockedDoorNames.Count + " liveLocked=" + CountLiveLocked() +
                     " | stateWalls=" + totalWallsFound + " released=" + totalWallsReleased +
                     " matched=" + totalWallsMatched + " unmatched=" + totalWallsUnmatched +
                     " | freedCells=" + totalFreed);

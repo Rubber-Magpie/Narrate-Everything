@@ -1665,6 +1665,19 @@ namespace DateEverythingAccess
                 SimpleNavBridge.PursuitTarget(playerPos, AutoWalkPursuitLookahead),
                 requiresInteraction: false);
 
+            // DOOR TARGET DONE EARLY. When the target itself is a door, the errand is "get this door
+            // open". Doors open from a distance (Interact fires within the door's range), and a
+            // closet door that swings toward the player then occupies the standpoint the route was
+            // heading for, so the player pushed into the leaf until the stall watchdog gave up. Once
+            // the door is open, finished moving, and the player is near it, that is arrival.
+            if (IsDoorTargetOpenNearby(route, playerPos))
+            {
+                LastSweepDriveArrived = true;
+                ApplyNavigationInput(Vector3.zero, Vector3.zero);
+                StopNavigationWithAnnouncement("navigation_arrived");
+                return;
+            }
+
             // Arrival: within target interaction radius (XZ). The planner already routes to a
             // goal cell inside this disc, so this matches the goal-cell expansion in O4.
             if (SimpleNavBridge.HasArrivedAtRouteTarget(playerPos))
@@ -2066,6 +2079,21 @@ namespace DateEverythingAccess
             }
 
             return null;
+        }
+
+        private const float DoorTargetDoneWithinM = 3.0f;
+
+        private static bool IsDoorTargetOpenNearby(SimpleNavRoute route, Vector3 playerPos)
+        {
+            if (route == null || route.TargetGameObjectId == 0 || SimpleNavCoverageSweep.IsActive)
+                return false;
+            DoorPortal door = FindSimpleRouteTargetDoor(route);
+            if (door == null || !door.open || SimpleNavBridge.IsDoorMoving(door))
+                return false;
+            Collider col = door.GetComponent();
+            Vector3 nearest = col != null ? col.ClosestPointOnBounds(playerPos) : door.transform.position;
+            float dx = nearest.x - playerPos.x, dz = nearest.z - playerPos.z;
+            return dx * dx + dz * dz <= DoorTargetDoneWithinM * DoorTargetDoneWithinM;
         }
 
         private static bool IsSimpleRouteDoorTargetComplete(SimpleNavRoute route)
