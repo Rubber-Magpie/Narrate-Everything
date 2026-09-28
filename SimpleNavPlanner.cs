@@ -390,6 +390,14 @@ namespace DateEverythingAccess
                 // stand-back cell gives a clean diagonal up-look. See
                 // [[project_navigation_los_camera_origin_mismatch_2026_06_14]].
                 goalQuality = new Dictionary<NodeKey, float>(goals.Count);
+
+                // Use the game-exact selection test for this target (see GameWouldSelectTarget).
+                _strictLosCollider = targetCollider;
+                _strictLosTarget = ResolveTargetInteractable(targetGameObjectId);
+                bool usedStrictLos = _strictLosTarget != null;
+
+                for (int pass = 0; pass < 2; pass++)
+                {
                 for (int i = 0; i < goals.Count; i++)
                 {
                     NodeKey g = goals[i];
@@ -412,13 +420,37 @@ namespace DateEverythingAccess
                         goalQuality[g] = GoalViewQuality(goalFloor, g, targetCollider, margin);
                     }
                 }
+                if (losClear.Count > 0 || _strictLosTarget == null)
+                    break;
+                // SAFETY NET: the strict test found no standpoint anywhere. Rather than turn this
+                // into a hard "no path", fall back to the older lenient test for this one target and
+                // say so loudly in the log, so objects where the strict model is wrong can be found
+                // and fixed instead of silently disappearing from auto-walk.
+                if (Main.Log != null)
+                    Main.Log.LogWarning("SimpleNavPlanner.Plan: strict game-ray LOS found no standpoint for target=" +
+                        (targetName ?? "<null>") + "#" + targetGameObjectId +
+                        " — falling back to lenient LOS (the game may not select it on arrival).");
+                _strictLosTarget = null;
+                usedStrictLos = false;
+                losClear.Clear(); passedOf.Clear(); clearanceOf.Clear(); goalQuality.Clear();
+                bestClearance = 0f;
+                }
+                _strictLosCollider = null;
+                _strictLosTarget = null;
+                if (usedStrictLos && Main.Log != null)
+                    Main.Log.LogInfo("SimpleNavPlanner.Plan: strict game-ray LOS kept " + losClear.Count +
+                        " standpoint(s) for target=" + (targetName ?? "<null>") + "#" + targetGameObjectId);
 
                 // FRONT-APPROACH: if this object faces one way and has LOS-clear cells on BOTH its
                 // front and back, keep only the front cells — a standpoint behind a monitor/TV/painting
                 // passes the offline ray (it hits the box's back face) but the game won't let the player
                 // interact from back there. Filters losClear + its parallel bookkeeping in lockstep;
                 // returns null (no change) for omnidirectional or one-sided objects. See the constant.
-                List<NodeKey> frontGoals = FrontApproachGoals(
+                // Only needed for the lenient test: the strict game-ray test already rejects standpoints
+                // behind a monitor/TV/painting, and it does so from real geometry rather than trusting
+                // the model's forward axis (the office Monitor's forward points out of its BACK, which
+                // made this heuristic keep exactly the wrong side).
+                List<NodeKey> frontGoals = usedStrictLos ? null : FrontApproachGoals(
                     goalFloor, losClear, targetPos, TargetForwardXZ(targetGameObjectId), passedOf, clearanceOf);
                 if (frontGoals != null)
                 {
@@ -2183,63 +2215,30 @@ namespace DateEverythingAccess
             {
                 Vector2 xz = floor.CellToWorld(g.Ix, g.Iz);
                 Vector3 eye = new Vector3(xz.x, floor.FloorY + InteractionEyeHeightM, xz.y);
-                Vector3 aimPoint = InteractionAimPoint(targetCollider, eye);
-                Vector3 dir = aimPoint - eye;
-                float dist = dir.magnitude;
-                if (dist <= 0.0001f)
-                    return LosProbeSideOffsetsM[LosProbeSideOffsetsM.Length - 1]; // on the target — max clearance
-
-                // Reject edge-grazing standpoints: the sightline must be comfortably inside the
-                // radius, not out at the rim where the view is marginal. Measured HORIZONTALLY
-                // (XZ only): the rim is about not standing too far ACROSS the floor from the
-                // object. A ceiling light / high-mounted prop has a large UNAVOIDABLE vertical
-                // gap (recessed lights sit ~11m up in the ground-floor ceiling); counting that
-                // gap in the rim distance rejected every cell and made the object un-interactable
-                // offline, even though the player legitimately stands under it and looks up
-                // (look + dateviator beam count as interaction — [[feedback-interaction-includes-look-and-glasses]]).
-                // The full-3D sightline is still used for the occlusion raycast below.
-                float horizDist = new Vector2(aimPoint.x - eye.x, aimPoint.z - eye.z).magnitude;
-                if (radiusM > 0f && horizDist > radiusM * InteractionRimFractionM)
-                    return NoLineOfSight;
-
-                dir /= dist;
                 BetterPlayerControl bpc = BetterPlayerControl.Instance;
                 int mask = bpc != null ? ~(int)bpc.dateviatorIgnores : ~0;
-
-                // CAMERA-POSE MODEL (not an idealized eye point). The game does NOT cast from the
-                // standpoint toward the target — it casts from the THIRD-PERSON camera, pulled back
-                // 0.25m along the look direction: origin = camera.pos - camera.forward*0.25,
-                // dir = camera.forward (BetterPlayerControl.cs:493). When the player stands to
-                // interact they face the target, so camera.forward ≈ dir. The dominant, wall-
-                // independent piece of the rig that the old eye-point ray ignored is that 0.25m
-                // BACKWARD pullback: it moves the origin AWAY from the target, which near a wall
-                // lands the origin INSIDE the wall and self-collides at dist≈0 — the exact failure
-                // that made the planner mark wall-adjacent items (light switches, mirrors, towel
-                // rails, built-in cupboards) interactable while the game's own ray rejected them.
-                // We model that backward shift and reject any cell whose pulled-back origin starts
-                // embedded in a non-target collider. See
-                // [[project_navigation_los_camera_origin_mismatch_2026_06_14]].
+                // See the CAMERA-POSE MODEL note in TryAimFromCell: the game casts from the camera
+                // pulled back 0.25m along the look direction.
                 const float CameraBackPullM = 0.25f;
-                Vector3 origin = eye - dir * CameraBackPullM;
 
-                // If the pulled-back origin is itself inside an occluder, the game's ray self-
-                // collides immediately (hit_dist≈0) and the object is not interactable from here.
-                Collider[] embedded = Physics.OverlapSphere(origin, 0.001f, mask, QueryTriggerInteraction.Ignore);
-                for (int e = 0; e < embedded.Length; e++)
+                // Try each candidate aim point; the first one the game's ray would accept decides the
+                // sightline for this cell. (A single fixed aim point rejected cells from which the
+                // player CAN select the object by looking at a different part of it, and in lenient
+                // mode accepted cells whose one ray merely grazed the object's bounds.)
+                Vector3 dir = Vector3.zero, origin = Vector3.zero;
+                float dist = 0f;
+                bool anyAim = false;
+                List<Vector3> aims = AimCandidates(targetCollider, eye);
+                for (int a = 0; a < aims.Count && !anyAim; a++)
                 {
-                    Collider c = embedded[e];
-                    if (c == null) continue;
-                    if (IsStructuralSlab(c)) continue; // standing on/under the floor/ceiling shell is normal
-                    if (IsTargetCollider(c, targetCollider)) continue;
-                    // In container-rescue mode a closed cupboard panel the camera origin grazes is
-                    // not a hard reject — it opens on arrival. Otherwise origin-in-occluder is fatal.
-                    if (passedContainerDoors != null && OperableContainerDoorName(c) != null) continue;
-                    return NoLineOfSight; // origin embedded in a wall/prop → game ray self-collides
+                    int r = TryAimFromCell(eye, aims[a], radiusM, mask, CameraBackPullM, targetCollider,
+                        passedContainerDoors, out dir, out origin, out dist);
+                    if (r == AimOnTarget)
+                        return LosProbeSideOffsetsM[LosProbeSideOffsetsM.Length - 1]; // standing on the target
+                    if (r == AimClear)
+                        anyAim = true;
                 }
-
-                // The CENTER ray must reach the target first (mirrors the game's single cast). If it's
-                // occluded, the cell is not a standpoint at all.
-                if (!CenterRayReachesTarget(origin, dir, dist + CameraBackPullM + 0.05f, mask, targetCollider, passedContainerDoors))
+                if (!anyAim)
                     return NoLineOfSight;
 
                 // GRADED CLEARANCE: the center ray clears, but HOW MUCH room does the line have?
@@ -2272,6 +2271,48 @@ namespace DateEverythingAccess
             {
                 return NoLineOfSight;
             }
+        }
+
+        private const int AimBlocked = 0, AimClear = 1, AimOnTarget = 2;
+
+        // One sightline attempt from `eye` toward `aimPoint`, modelling the game's camera ray. Returns
+        // AimClear with the ray's origin/dir/dist when the game would select the target along it.
+        private static int TryAimFromCell(Vector3 eye, Vector3 aimPoint, float radiusM, int mask,
+            float cameraBackPullM, Collider targetCollider, HashSet<string> passedContainerDoors,
+            out Vector3 dir, out Vector3 origin, out float dist)
+        {
+            dir = aimPoint - eye;
+            dist = dir.magnitude;
+            origin = eye;
+            if (dist <= 0.0001f)
+                return AimOnTarget;
+
+            // Reject edge-grazing standpoints: the sightline must be comfortably inside the radius,
+            // measured HORIZONTALLY (a ceiling fixture's unavoidable vertical gap must not count).
+            float horizDist = new Vector2(aimPoint.x - eye.x, aimPoint.z - eye.z).magnitude;
+            if (radiusM > 0f && horizDist > radiusM * InteractionRimFractionM)
+                return AimBlocked;
+
+            dir /= dist;
+
+            // CAMERA-POSE MODEL: the game casts from the camera pulled back 0.25m along forward
+            // (BetterPlayerControl.Update). Near a wall that origin lands INSIDE the wall and the
+            // ray self-collides, so reject origins embedded in a non-target collider.
+            origin = eye - dir * cameraBackPullM;
+            Collider[] embedded = Physics.OverlapSphere(origin, 0.001f, mask, QueryTriggerInteraction.Ignore);
+            for (int e = 0; e < embedded.Length; e++)
+            {
+                Collider c = embedded[e];
+                if (c == null) continue;
+                if (IsStructuralSlab(c)) continue;
+                if (IsTargetCollider(c, targetCollider)) continue;
+                if (passedContainerDoors != null && OperableContainerDoorName(c) != null) continue;
+                return AimBlocked;
+            }
+
+            if (!CenterRayReachesTarget(origin, dir, dist + cameraBackPullM + 0.05f, mask, targetCollider, passedContainerDoors))
+                return AimBlocked;
+            return AimClear;
         }
 
         // Perpendicular side-probe offsets (m) for the graded LOS clearance margin. Two steps keep
@@ -2411,6 +2452,77 @@ namespace DateEverythingAccess
             return ua == ub || a.IsChildOf(ub) || b.IsChildOf(ua) || ua.IsChildOf(ub) || ub.IsChildOf(ua);
         }
 
+        // GAME-EXACT SELECTION. The game decides what the player is pointing at with ONE camera ray
+        // (BetterPlayerControl.Update): Physics.Raycast from camera.pos - camera.forward*0.25 along
+        // camera.forward, infinite length, mask ~dateviatorIgnores. It takes the FIRST hit, calls
+        // TryGetComponent<InteractableObj> on hit.transform (the Rigidbody's transform when there is
+        // one, else the collider's), and only that exact InteractableObj can be selected. A hit on the
+        // object's casing, stand, a sibling part, or the desk/counter it sits on selects NOTHING.
+        //
+        // The older IsTargetCollider test also accepted parents, children and anything sharing the
+        // target's furniture unit. That passed standpoints behind a monitor (ray hits the housing)
+        // and beside small props on counters (ray hits the counter), so auto-walk delivered the
+        // player to spots where the game never selects the target. When the planner knows the
+        // target's InteractableObj it now uses this strict test instead.
+        [ThreadStatic] private static Collider _strictLosCollider;
+        [ThreadStatic] private static InteractableObj _strictLosTarget;
+
+        // True if a camera ray whose first real hit is `hit` would make the game select `target`.
+        public static bool GameWouldSelectTarget(RaycastHit hit, InteractableObj target)
+        {
+            if (target == null) return false;
+            Transform t = hit.transform; // Rigidbody-aware, exactly like the game's RaycastHit.transform
+            if (t == null) return false;
+            InteractableObj io = t.GetComponent<InteractableObj>();
+            return io != null && io == target;
+        }
+
+        // The game's own ray, cast from a given camera origin along `dir` (unit), with the game's mask.
+        // True when the game would select `target`. Used by the arrival/facing step, where the real
+        // camera pose is known.
+        public static bool GameRayWouldSelect(Vector3 cameraPos, Vector3 dir, InteractableObj target)
+        {
+            if (target == null) return false;
+            BetterPlayerControl bpc = BetterPlayerControl.Instance;
+            int mask = bpc != null ? ~(int)bpc.dateviatorIgnores : ~0;
+            Vector3 origin = cameraPos - dir * 0.25f;
+            if (!Physics.Raycast(new Ray(origin, dir), out RaycastHit hit, float.PositiveInfinity, mask))
+                return false;
+            return GameWouldSelectTarget(hit, target);
+        }
+
+        public static InteractableObj ResolveTargetInteractable(int targetGameObjectId)
+        {
+            if (targetGameObjectId == 0) return null;
+            InteractableObj[] all = UnityEngine.Object.FindObjectsOfType<InteractableObj>();
+            for (int i = 0; i < all.Length; i++)
+            {
+                InteractableObj io = all[i];
+                if (io != null && io.gameObject != null && io.gameObject.GetInstanceID() == targetGameObjectId)
+                    return io;
+            }
+            return null;
+        }
+
+        // Candidate points to aim the camera at. One point is not enough: the closest point on an
+        // axis-aligned bounds box can sit in empty air beside a rotated or oddly-shaped mesh, and a
+        // small prop on a counter is often only hittable at its TOP (a level ray hits the counter
+        // edge first). Ordered by preference; callers take the first that works.
+        public static List<Vector3> AimCandidates(Collider targetCollider, Vector3 eye)
+        {
+            var list = new List<Vector3>(4);
+            if (targetCollider == null) return list;
+            Bounds b = targetCollider.bounds;
+            list.Add(InteractionAimPoint(targetCollider, eye));
+            list.Add(b.center);
+            float inset = Mathf.Min(0.1f, b.extents.y * 0.5f);
+            list.Add(new Vector3(b.center.x, b.max.y - inset, b.center.z));
+            // Midway between the centre and the face nearest the viewer (thin objects like screens).
+            Vector3 near = targetCollider.ClosestPointOnBounds(eye);
+            list.Add(Vector3.Lerp(b.center, near, 0.5f));
+            return list;
+        }
+
         // True if a ray from `origin` along `dir` reaches the target collider first (no occluder) or
         // hits nothing within `maxDist` (clear line to the surface). Mirrors the game's first-hit rule,
         // with ONE deliberate leniency: a structural FLOOR/CEILING slab between the eye and a
@@ -2439,9 +2551,16 @@ namespace DateEverythingAccess
         private static bool CenterRayReachesTarget(Vector3 origin, Vector3 dir, float maxDist, int mask,
             Collider targetCollider, HashSet<string> passedContainerDoors)
         {
+            bool strict = _strictLosTarget != null && targetCollider != null && targetCollider == _strictLosCollider;
+            if (strict)
+            {
+                // The game's ray is infinite; the target must be the FIRST thing it meets. Extend the
+                // cast past the aim point by the target's size so we actually reach its surface.
+                maxDist += targetCollider.bounds.extents.magnitude * 2f + 0.5f;
+            }
             RaycastHit[] hits = Physics.RaycastAll(new Ray(origin, dir), maxDist, mask);
             if (hits == null || hits.Length == 0)
-                return true; // nothing between camera and target surface — clear line
+                return !strict; // lenient: nothing in the way. strict: the ray never touched the target.
 
             RaycastHit firstReal = default;
             float bestDist = float.PositiveInfinity;
@@ -2468,7 +2587,9 @@ namespace DateEverythingAccess
                 }
             }
             if (!found)
-                return true; // only structural slabs (and any pass-through container doors) in the way
+                return !strict; // only structural slabs / pass-through doors; strict needs a real target hit
+            if (strict)
+                return GameWouldSelectTarget(firstReal, _strictLosTarget);
             return IsTargetCollider(firstReal.collider, targetCollider);
         }
 

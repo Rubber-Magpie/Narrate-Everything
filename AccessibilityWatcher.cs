@@ -124,11 +124,10 @@ namespace DateEverythingAccess
         // the game's 0.2 translate dead-zone (player frozen) AND the watchdog's move test (so it
         // scores the freeze as "turning" and never times out). The gate keeps move firmly on/off.
         private const float AutoWalkFacingGateCosThreshold = 0.342f;
-        // Max seconds the post-arrival turn-to-face phase runs before we accept arrival
-        // regardless of whether the game's raycast selected the target. Generous enough to
-        // complete a full turn-and-pitch toward an overhead/odd object, short enough that a
-        // never-selectable target doesn't hang. Looking counts as interaction.
-        private const float AutoWalkFaceTimeoutSeconds = 3f;
+        // Max seconds the post-arrival turn-to-face phase runs. If the game's raycast still has
+        // not selected the target by then, auto-walk stops and says so honestly rather than
+        // announcing "Arrived". Generous enough for a full turn-and-pitch toward an odd object.
+        private const float AutoWalkFaceTimeoutSeconds = 4f;
         private const float AutoWalkProgressDistance = 0.35f;
         private const float AutoWalkBlockedTimeoutSeconds = 2f;
         // Within this distance of the FINAL waypoint, the follower drops the binary heading gate and
@@ -1678,22 +1677,27 @@ namespace DateEverythingAccess
                 if (!IsSimpleRouteTargetSelected(route))
                 {
                     Vector3 lookPoint = ResolveSimpleRouteTargetLookPoint(route);
-                    Vector3 lookInput = GetLookInputTowardRouteTarget(playerTransform, lookPoint);
+                    // Fine deadzone for the final aim: the coarse traversal deadzone (~2 degrees) is
+                    // enough to leave the crosshair just off a small object.
+                    Vector3 lookInput = GetLookInputTowardRouteTarget(playerTransform, lookPoint, FinalAimDeadzone);
 
                     // Turn-to-face is the final phase: we're in range, now orient toward the
-                    // target so the game's first-person raycast selects it. Bound it so it
-                    // can't spin forever when the raycast never lands (small/odd colliders):
-                    // once we're pointed AT the target (look input ≈ 0, so we've finished
-                    // turning) OR we've been facing for AutoWalkFaceTimeoutSeconds, accept
-                    // arrival — looking IS the interaction for a blind player, who just needs
-                    // to be placed in range and oriented. See [[feedback-interaction-includes-look-and-glasses]].
+                    // target so the game's first-person raycast selects it. Bounded by
+                    // AutoWalkFaceTimeoutSeconds so it can't spin forever.
+                    // Arrival is only announced once the GAME has selected the target (checked at
+                    // the top of this branch via IsSimpleRouteTargetSelected). Pointing roughly at it
+                    // is not enough: previously "aimed" or a 3s timeout announced "Arrived" even when
+                    // the crosshair sat on the monitor's back panel or the counter under a small prop,
+                    // leaving the player told they had arrived at something they could not use.
                     if (_facingSince == 0f) _facingSince = Time.unscaledTime;
-                    bool aimedAtTarget = lookInput.sqrMagnitude <= 0.0001f;
                     bool facedLongEnough = Time.unscaledTime - _facingSince >= AutoWalkFaceTimeoutSeconds;
-                    if (aimedAtTarget || facedLongEnough)
+                    if (facedLongEnough)
                     {
                         ApplyNavigationInput(Vector3.zero, Vector3.zero);
-                        StopNavigationWithAnnouncement("navigation_arrived");
+                        Main.Log.LogInfo("SimpleNav arrival: in range but the game did not select target=" +
+                            (route.TargetName ?? "<null>") + " after " + AutoWalkFaceTimeoutSeconds +
+                            "s of facing player=" + FormatVector3(playerPos) + " lookPoint=" + FormatVector3(lookPoint));
+                        StopNavigationWithAnnouncement("navigation_arrived_not_selected");
                         return;
                     }
 
@@ -1891,6 +1895,29 @@ namespace DateEverythingAccess
             if (targetObject == null)
                 return route.TargetPosition;
 
+            // Prefer a point the game's own camera ray would SELECT from where the camera is now:
+            // try several aim points on each of the target's colliders and take the first one whose
+            // ray lands on the target itself (not its casing, stand, or the furniture under it).
+            Camera selCam = Camera.main;
+            InteractableObj targetIo = targetObject.GetComponent<InteractableObj>();
+            if (selCam != null && targetIo != null)
+            {
+                Vector3 camPos = selCam.transform.position;
+                Collider[] cols = targetObject.GetComponentsInChildren<Collider>();
+                for (int c = 0; c < cols.Length; c++)
+                {
+                    if (cols[c] == null || !cols[c].enabled) continue;
+                    List<Vector3> aims = SimpleNavPlanner.AimCandidates(cols[c], camPos);
+                    for (int a = 0; a < aims.Count; a++)
+                    {
+                        Vector3 d = aims[a] - camPos;
+                        if (d.sqrMagnitude < 1e-6f) continue;
+                        if (SimpleNavPlanner.GameRayWouldSelect(camPos, d.normalized, targetIo))
+                            return aims[a];
+                    }
+                }
+            }
+
             Collider collider = targetObject.GetComponent<Collider>();
             if (collider == null)
                 collider = targetObject.GetComponentInChildren<Collider>();
@@ -1967,7 +1994,15 @@ namespace DateEverythingAccess
             return null;
         }
 
+        // Final-aim deadzone (fraction of AutoWalkLookScaleDegrees): 0.01 * 45 deg ~= 0.45 deg.
+        private const float FinalAimDeadzone = 0.01f;
+
         private static Vector3 GetLookInputTowardRouteTarget(Transform playerTransform, Vector3 targetPosition)
+        {
+            return GetLookInputTowardRouteTarget(playerTransform, targetPosition, 0.05f);
+        }
+
+        private static Vector3 GetLookInputTowardRouteTarget(Transform playerTransform, Vector3 targetPosition, float deadzone)
         {
             Vector3 toTarget = targetPosition - playerTransform.position;
             Vector3 flatTarget = toTarget;
@@ -1996,8 +2031,8 @@ namespace DateEverythingAccess
                 }
             }
 
-            if (Mathf.Abs(yaw) < 0.05f) yaw = 0f;
-            if (Mathf.Abs(pitch) < 0.05f) pitch = 0f;
+            if (Mathf.Abs(yaw) < deadzone) yaw = 0f;
+            if (Mathf.Abs(pitch) < deadzone) pitch = 0f;
             return new Vector3(yaw, 0f, pitch);
         }
 
