@@ -251,6 +251,7 @@ namespace DateEverythingAccess
             Add("navigation_arrived", "Arrived at target.");
             Add("navigation_arrived_not_selected", "Arrived nearby, but the target is not selected. Turn slowly to find it.");
             Add("navigation_blocked", "Navigation blocked or interrupted.");
+            Add("navigation_rerouting", "Blocked. Finding another way.");
             Add("navigation_no_path", "No path found to {0}.");
             Add("navigation_tutorial_gift_delivery_trigger", "Gift delivery trigger");
             Add("navigation_planner_not_ready", "Navigation data not ready yet.");
@@ -459,6 +460,7 @@ namespace DateEverythingAccess
             AddJa("navigation_arrived", "目標に到着しました。");
             AddJa("navigation_arrived_not_selected", "目標の近くに到着しましたが、選択されていません。ゆっくり向きを変えて探してください。");
             AddJa("navigation_blocked", "ナビゲーションが妨げられたか中断されました。");
+            AddJa("navigation_rerouting", "進めません。別の経路を探しています。");
             AddJa("navigation_no_path", "{0} への経路が見つかりません。");
             AddJa("navigation_tutorial_gift_delivery_trigger", "ギフト配達トリガー");
             AddJa("navigation_planner_not_ready", "ナビゲーションデータの準備がまだできていません。");

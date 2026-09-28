@@ -160,6 +160,8 @@ namespace DateEverythingAccess
                 return null;
             }
 
+            PruneRuntimeBlockers();
+
             // Reflect live Door.open states into per-floor freed-cell overlays so A* can route
             // through doors that are already open. Closed doors fall back to the bake's
             // closed-pose blockers (which the door-tagging pass still flags so the executor
@@ -1397,6 +1399,104 @@ namespace DateEverythingAccess
         // regardless of which floor the mid-stair player snaps to.
         // See [[project-navigation-executor-corner-stall]].
         private const float StartFloorMatchToleranceM = 7.0f;
+
+        // ---- runtime-learned blockers ----
+
+        // How long a learned blocker stays in the overlay. Long enough to cover the rest of the
+        // errand; short enough that a chair that gets moved back does not wall off a room forever.
+        private const float RuntimeBlockerLifetimeSeconds = 600f;
+        // Colliders larger than this (in both X and Z) are room shells / wall meshes: marking their
+        // whole bounds would black out a room, so only a disc around the contact point is marked.
+        private const float RuntimeBlockerMaxFootprintM = 3.0f;
+        private const float RuntimeBlockerContactDiscM = 0.6f;
+        private const float RuntimeBlockerPadM = 0.2f;
+        // Never mark cells this close to the player: they must stay a valid route start.
+        private const float RuntimeBlockerKeepClearAroundPlayerM = 0.35f;
+        private const float RuntimeBlockerMaxFloorOffsetM = 0.6f;
+
+        private static void PruneRuntimeBlockers()
+        {
+            if (_floors == null) return;
+            float now = Time.unscaledTime;
+            for (int i = 0; i < _floors.Count; i++)
+            {
+                Floor f = _floors[i];
+                if (f.RuntimeBlockedUntil.Count == 0) continue;
+                var expired = new List<long>();
+                foreach (var kv in f.RuntimeBlockedUntil)
+                    if (kv.Value <= now) expired.Add(kv.Key);
+                if (expired.Count == 0) continue;
+                for (int e = 0; e < expired.Count; e++) f.RuntimeBlockedUntil.Remove(expired[e]);
+                f.InvalidateClearance();
+            }
+        }
+
+        // Record a physical blocker the follower ran into so the next Plan() routes around it.
+        // `blocker` may be null (stuck with nothing detected): then a disc at `contactPoint` is
+        // marked. Returns the number of newly blocked cells.
+        public static int MarkRuntimeBlocker(Vector3 playerPos, Collider blocker, Vector3 contactPoint)
+        {
+            if (!EnsureLoaded()) return 0;
+            Floor f = FloorForY(playerPos.y, FloorMatchToleranceM);
+            if (f == null) return 0;
+            // Only learn blockers on flat floor. Mid-staircase the player is well above/below the
+            // floor plane, and marking cells there could sever the stair crossing itself.
+            if (Mathf.Abs(playerPos.y - f.FloorY) > RuntimeBlockerMaxFloorOffsetM)
+            {
+                if (Main.Log != null)
+                    Main.Log.LogInfo("SimpleNavPlanner.MarkRuntimeBlocker: skipped, player y=" + playerPos.y +
+                        " is off the " + f.Label + " floor plane (y=" + f.FloorY + ") — on stairs?");
+                return 0;
+            }
+
+            float minX, maxX, minZ, maxZ;
+            string how;
+            if (blocker != null &&
+                blocker.bounds.size.x <= RuntimeBlockerMaxFootprintM && blocker.bounds.size.z <= RuntimeBlockerMaxFootprintM)
+            {
+                Bounds b = blocker.bounds;
+                minX = b.min.x - RuntimeBlockerPadM; maxX = b.max.x + RuntimeBlockerPadM;
+                minZ = b.min.z - RuntimeBlockerPadM; maxZ = b.max.z + RuntimeBlockerPadM;
+                how = "bounds";
+            }
+            else
+            {
+                minX = contactPoint.x - RuntimeBlockerContactDiscM; maxX = contactPoint.x + RuntimeBlockerContactDiscM;
+                minZ = contactPoint.z - RuntimeBlockerContactDiscM; maxZ = contactPoint.z + RuntimeBlockerContactDiscM;
+                how = blocker != null ? "contact-disc(large collider)" : "contact-disc(no collider)";
+            }
+
+            f.WorldToCell(minX, minZ, out int ix0, out int iz0);
+            f.WorldToCell(maxX, maxZ, out int ix1, out int iz1);
+            float until = Time.unscaledTime + RuntimeBlockerLifetimeSeconds;
+            bool disc = how.StartsWith("contact", StringComparison.Ordinal);
+            float keep2 = RuntimeBlockerKeepClearAroundPlayerM * RuntimeBlockerKeepClearAroundPlayerM;
+            int added = 0;
+            for (int ix = ix0; ix <= ix1; ix++)
+            {
+                for (int iz = iz0; iz <= iz1; iz++)
+                {
+                    if (!f.InBounds(ix, iz)) continue;
+                    Vector2 w = f.CellToWorld(ix, iz);
+                    if (disc)
+                    {
+                        float dx = w.x - contactPoint.x, dz = w.y - contactPoint.z;
+                        if (dx * dx + dz * dz > RuntimeBlockerContactDiscM * RuntimeBlockerContactDiscM) continue;
+                    }
+                    float px = w.x - playerPos.x, pz = w.y - playerPos.z;
+                    if (px * px + pz * pz < keep2) continue;
+                    long key = Floor.PackCell(ix, iz);
+                    if (!f.RuntimeBlockedUntil.ContainsKey(key)) added++;
+                    f.RuntimeBlockedUntil[key] = until;
+                }
+            }
+            if (added > 0) f.InvalidateClearance();
+            if (Main.Log != null)
+                Main.Log.LogInfo("SimpleNavPlanner.MarkRuntimeBlocker: floor=" + f.Label + " blocker=" +
+                    (blocker != null ? blocker.name : "<none>") + " mode=" + how + " cellsAdded=" + added +
+                    " totalRuntimeBlocked=" + f.RuntimeBlockedUntil.Count);
+            return added;
+        }
 
         private static Floor FloorForY(float y, float toleranceM)
         {
@@ -3096,6 +3196,10 @@ namespace DateEverythingAccess
             // Cells BLOCKED by currently-open doors (the swung-leaf footprint). Mirror of
             // ExtraNavigable, opposite sign: set per-Plan() from the same live Door.open state.
             public readonly HashSet<long> ExtraBlocked = new HashSet<long>();
+            // Cells the auto-walk follower found PHYSICALLY blocked at runtime (furniture the bake
+            // does not know about, moved props), with the unscaled time each entry expires. Kept
+            // separate from ExtraBlocked because ApplyLiveDoorState clears and rebuilds that one.
+            public readonly Dictionary<long, float> RuntimeBlockedUntil = new Dictionary<long, float>();
             // Per-door freed-cells indexed from the bake's doors[*].freed_cells. Multiple
             // door records may share a GameObject name (different cupboards with identical
             // names) — the indexer unions their cells.
@@ -3225,6 +3329,8 @@ namespace DateEverythingAccess
                 // leaf swings into is walkable closed, blocked open. See
                 // [[project-navigation-doorway-capsule-clearance-2026-06-18]].
                 if (ExtraBlocked.Count > 0 && ExtraBlocked.Contains(key))
+                    return false;
+                if (RuntimeBlockedUntil.Count > 0 && RuntimeBlockedUntil.ContainsKey(key))
                     return false;
                 if (ExtraNavigable.Count > 0 && ExtraNavigable.Contains(key))
                     return true;

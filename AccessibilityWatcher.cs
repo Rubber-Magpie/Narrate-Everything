@@ -1846,6 +1846,18 @@ namespace DateEverythingAccess
             }
             else if (Time.unscaledTime - _lastAutoWalkProgressTime >= AutoWalkBlockedTimeoutSeconds)
             {
+                // STALL RECOVERY. Before giving up, learn what is physically in the way (furniture
+                // the navigation bake does not know about, a moved prop, a corner the route shaved),
+                // mark it blocked, and plan a fresh route from here. Only for the user's own
+                // auto-walk, not the coverage sweep, which classifies stalls itself.
+                if (!SimpleNavCoverageSweep.IsActive && !turningToAlign && _stallReplans < MaxStallReplansPerRoute &&
+                    TryLearnBlockerAndReplan(playerTransform, playerPos, walkDir))
+                {
+                    _stallReplans++;
+                    _lastAutoWalkPosition = playerPos;
+                    _lastAutoWalkProgressTime = Time.unscaledTime;
+                    return;
+                }
                 string runtimeBlocker = ProbeRuntimeBlocker(playerPos, target);
                 LogNavigationAutoWalkDebug(
                     "Simple-nav route progress timeout target=" + (route.TargetName ?? "<null>") +
@@ -1855,6 +1867,76 @@ namespace DateEverythingAccess
                 StopNavigationBlocked("simple-nav route progress timeout target=" + (route.TargetName ?? "<null>") +
                     " runtimeBlocker=" + (runtimeBlocker ?? "<none>"));
             }
+        }
+
+        // ---- stall recovery ----
+
+        private const int MaxStallReplansPerRoute = 3;
+        private int _stallReplans;
+
+        // Find the collider the player is pushing into (sphere casts at chest and head height along
+        // the travel direction, from inside the player's own capsule so it is not reported), mark it
+        // in the planner's runtime-blocked overlay, and re-plan to the same target. Returns true when
+        // a new route was installed (or when re-planning failed and navigation was stopped with the
+        // planner's own message).
+        private bool TryLearnBlockerAndReplan(Transform playerTransform, Vector3 playerPos, Vector3 walkDir)
+        {
+            Vector3 dir = walkDir;
+            dir.y = 0f;
+            if (dir.sqrMagnitude < 1e-4f) dir = playerTransform.forward;
+            dir.y = 0f;
+            dir.Normalize();
+
+            Collider blocker = null;
+            Vector3 contact = playerPos + dir * 1.0f;
+            float best = float.PositiveInfinity;
+            float[] heights = { 1.0f, 2.0f }; // chest and head: ankle height catches steps and thresholds
+            for (int h = 0; h < heights.Length; h++)
+            {
+                if (Physics.SphereCast(playerPos + Vector3.up * heights[h], 0.35f, dir, out RaycastHit hit, 1.6f,
+                        Physics.AllLayers, QueryTriggerInteraction.Ignore))
+                {
+                    if (BetterPlayerControl.Instance != null && hit.collider != null &&
+                        hit.collider.transform.IsChildOf(BetterPlayerControl.Instance.transform))
+                        continue; // our own capsule
+                    if (hit.distance < best)
+                    {
+                        best = hit.distance;
+                        blocker = hit.collider;
+                        contact = hit.point;
+                    }
+                }
+            }
+
+            // Never learn a staircase as an obstacle: marking stair cells would cut off a floor.
+            SimpleNavWaypoint wp = SimpleNavBridge.ActiveWaypoint;
+            bool nearStairs = (wp != null && wp.Kind == SimpleNavWaypointKind.Stairs) ||
+                (blocker != null && blocker.name.IndexOf("stair", StringComparison.OrdinalIgnoreCase) >= 0);
+            if (nearStairs)
+            {
+                Main.Log.LogInfo("SimpleNav stall recovery skipped near stairs player=" + FormatVector3(playerPos) +
+                    " blocker=" + (blocker != null ? blocker.name : "<none>"));
+                return false;
+            }
+
+            int added = SimpleNavPlanner.MarkRuntimeBlocker(playerPos, blocker, contact);
+            Main.Log.LogInfo("SimpleNav stall recovery #" + (_stallReplans + 1) + " player=" + FormatVector3(playerPos) +
+                " dir=" + FormatVector3(dir) + " blocker=" + (blocker != null ? RuntimeBlockerProbe.PathOf(blocker.gameObject) : "<none>") +
+                " cellsAdded=" + added);
+            if (added == 0)
+                return false; // nothing new learned; a replan would produce the same route
+
+            ScreenReader.Say(Loc.Get("navigation_rerouting"));
+            if (!TryPlanAndInstallSimpleNavRoute())
+            {
+                // The planner already announced why (e.g. no path). Stop quietly so the player
+                // does not also hear the generic "blocked" message.
+                ApplyNavigationInput(Vector3.zero, Vector3.zero);
+                StopNavigationRuntime();
+                return true;
+            }
+            ClearNavigationBlockedDetail();
+            return true;
         }
 
         private static bool IsSimpleRouteTargetSelected(SimpleNavRoute route)
@@ -4825,6 +4907,7 @@ namespace DateEverythingAccess
             }
 
             _isAutoWalking = true;
+            _stallReplans = 0;
             LogCapsuleDimensionsOnce();
             _lastAutoWalkPosition = BetterPlayerControl.Instance != null ? BetterPlayerControl.Instance.transform.position : Vector3.zero;
             _lastAutoWalkProgressTime = Time.unscaledTime;
