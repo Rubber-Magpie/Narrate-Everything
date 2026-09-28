@@ -1252,6 +1252,33 @@ namespace DateEverythingAccess
         // (DresserWall) expose `collider.enabled`. Anything currently open / released
         // contributes its bake record's freed cells. Unknown names (components without a
         // matching bake record) are silently ignored.
+        // Live locked flag per door name, refreshed by every ApplyLiveDoorState. Several components
+        // can share a name (duplicate cupboard doors); any locked-and-closed one marks it locked.
+        private static readonly Dictionary<string, bool> _liveLockedByName =
+            new Dictionary<string, bool>(StringComparer.Ordinal);
+
+        private static void RecordLiveLock(string name, bool lockedNow)
+        {
+            if (string.IsNullOrEmpty(name)) return;
+            bool prev;
+            _liveLockedByName[name] = _liveLockedByName.TryGetValue(name, out prev) ? (prev || lockedNow) : lockedNow;
+        }
+
+        private static string CountLiveLocked()
+        {
+            var names = new List<string>();
+            foreach (var kv in _liveLockedByName) if (kv.Value) names.Add(kv.Key);
+            return names.Count + (names.Count > 0 ? "[" + string.Join(",", names.ToArray()) + "]" : "");
+        }
+
+        // Live state when the door exists in the scene; otherwise the bake's record.
+        private static bool IsDoorLockedNow(string name)
+        {
+            bool live;
+            if (_liveLockedByName.TryGetValue(name, out live)) return live;
+            return _lockedDoorNames.Contains(name);
+        }
+
         private static void ApplyLiveDoorState()
         {
             for (int i = 0; i < _floors.Count; i++)
@@ -1268,12 +1295,18 @@ namespace DateEverythingAccess
             int totalDoorsUnmatched = 0;
             int totalFreed = 0;
 
+            // LIVE LOCK STATE. The bake records `locked` once, but locks change during play (the attic
+            // door starts locked and is unlocked by the story; the back door may open up later). Record
+            // each door's live locked flag so the openable pass below uses it instead of the bake's.
+            _liveLockedByName.Clear();
+
             Door[] hinges = UnityEngine.Object.FindObjectsOfType<Door>();
             for (int i = 0; i < hinges.Length; i++)
             {
                 Door door = hinges[i];
                 if (door == null || door.gameObject == null) continue;
                 totalDoorsFound++;
+                RecordLiveLock(door.gameObject.name, door.locked && !door.open);
                 if (!door.open) continue;
                 totalDoorsOpen++;
                 _lastOpenDoorNames.Add(door.gameObject.name);
@@ -1287,6 +1320,7 @@ namespace DateEverythingAccess
                 SlidingDoor door = sliders[i];
                 if (door == null || door.gameObject == null) continue;
                 totalDoorsFound++;
+                RecordLiveLock(door.gameObject.name, door.locked && !door.open);
                 if (!door.open) continue;
                 totalDoorsOpen++;
                 _lastOpenDoorNames.Add(door.gameObject.name);
@@ -1336,7 +1370,7 @@ namespace DateEverythingAccess
                 Floor f = _floors[fi];
                 foreach (var kvp in f.DoorFreedByName)
                 {
-                    if (_lockedDoorNames.Contains(kvp.Key)) continue;
+                    if (IsDoorLockedNow(kvp.Key)) continue;
                     int before = f.ExtraNavigable.Count;
                     f.ExtraNavigable.UnionWith(kvp.Value);
                     openableFreed += f.ExtraNavigable.Count - before;
@@ -1346,7 +1380,7 @@ namespace DateEverythingAccess
                 // as the freed union above, opposite sign.
                 foreach (var kvp in f.DoorBlockedByName)
                 {
-                    if (_lockedDoorNames.Contains(kvp.Key)) continue;
+                    if (IsDoorLockedNow(kvp.Key)) continue;
                     f.ExtraBlocked.UnionWith(kvp.Value);
                 }
             }
@@ -1361,7 +1395,7 @@ namespace DateEverythingAccess
                 Main.Log.LogInfo("SimpleNavPlanner.ApplyLiveDoorState: doors=" + totalDoorsFound +
                     " (hinges=" + hinges.Length + " sliders=" + sliders.Length + ")" +
                     " open=" + totalDoorsOpen + " matched=" + totalDoorsMatched + " unmatched=" + totalDoorsUnmatched +
-                    " | openableFreed=" + openableFreed + " lockedDoors=" + _lockedDoorNames.Count +
+                    " | openableFreed=" + openableFreed + " lockedDoors=" + _lockedDoorNames.Count + " liveLocked=" + CountLiveLocked() +
                     " | stateWalls=" + totalWallsFound + " released=" + totalWallsReleased +
                     " matched=" + totalWallsMatched + " unmatched=" + totalWallsUnmatched +
                     " | freedCells=" + totalFreed);
