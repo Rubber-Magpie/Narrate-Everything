@@ -1011,8 +1011,21 @@ namespace DateEverythingAccess
                 return;
             if (BetterPlayerControl.Instance == null)
                 return;
-            ApplyNavigationInput(_lastAutoWalkMove, _lastAutoWalkLook);
+            Vector3 look = _lastAutoWalkLook;
+            if (_steerMode != SteerNone)
+            {
+                // Recompute the turn from the CURRENT heading each physics step (see TURN CONTROL).
+                Transform body = BetterPlayerControl.Instance.transform;
+                Vector3 fresh = GetLookInputTowardRouteTarget(body, _steerPoint,
+                    _steerMode == SteerFace ? FinalAimDeadzoneDeg : 0f);
+                look = _steerMode == SteerFace ? fresh : new Vector3(fresh.x, 0f, 0f);
+            }
+            ApplyNavigationInput(_lastAutoWalkMove, look);
         }
+
+        private const int SteerNone = 0, SteerTraverse = 1, SteerFace = 2;
+        private int _steerMode;
+        private Vector3 _steerPoint;
 
         private void LateUpdate()
         {
@@ -1679,7 +1692,7 @@ namespace DateEverythingAccess
                     Vector3 lookPoint = ResolveSimpleRouteTargetLookPoint(route);
                     // Fine deadzone for the final aim: the coarse traversal deadzone (~2 degrees) is
                     // enough to leave the crosshair just off a small object.
-                    Vector3 lookInput = GetLookInputTowardRouteTarget(playerTransform, lookPoint, FinalAimDeadzone);
+                    Vector3 lookInput = GetLookInputTowardRouteTarget(playerTransform, lookPoint, FinalAimDeadzoneDeg);
 
                     // Turn-to-face is the final phase: we're in range, now orient toward the
                     // target so the game's first-person raycast selects it. Bounded by
@@ -1707,6 +1720,8 @@ namespace DateEverythingAccess
                     _lastAutoWalkMove = Vector3.zero;
                     _lastAutoWalkLook = lookInput;
                     _hasAutoWalkInput = true;
+                    _steerPoint = lookPoint;
+                    _steerMode = SteerFace;
                     LogSimpleRouteFrameDiagnostic(route, playerTransform, playerPos, lookPoint, Vector3.zero, lookInput, false);
                     return;
                 }
@@ -1734,6 +1749,7 @@ namespace DateEverythingAccess
                 ApplyNavigationInput(Vector3.zero, Vector3.zero);
                 _lastAutoWalkMove = Vector3.zero;
                 _lastAutoWalkLook = Vector3.zero;
+                _steerMode = SteerNone;
                 return;
             }
 
@@ -1777,7 +1793,7 @@ namespace DateEverythingAccess
                     Mathf.Clamp(localDirection.x, -1f, 1f), 0f,
                     Mathf.Clamp(localDirection.z, -1f, 1f)).normalized
                 : Vector3.zero;
-            Vector3 look = new Vector3(Mathf.Clamp(turnDeg / AutoWalkLookScaleDegrees, -1f, 1f), 0f, 0f);
+            Vector3 look = new Vector3(LookAxisForError(turnDeg, 0f), 0f, 0f);
 
             // Hold position while the segment's door is mid-swing — walking into a moving
             // door trips Door.OnCollisionEnter and pins the swing.
@@ -1794,6 +1810,8 @@ namespace DateEverythingAccess
             _lastAutoWalkMove = move;
             _lastAutoWalkLook = look;
             _hasAutoWalkInput = true;
+            _steerPoint = steerTarget;
+            _steerMode = SteerTraverse;
 
             LogSimpleRouteFrameDiagnostic(route, playerTransform, playerPos, target, move, look, waitingForDoorSwing);
             SimpleNavBridge.RecordFrameProgress(playerPos);
@@ -1994,15 +2012,40 @@ namespace DateEverythingAccess
             return null;
         }
 
-        // Final-aim deadzone (fraction of AutoWalkLookScaleDegrees): 0.01 * 45 deg ~= 0.45 deg.
-        private const float FinalAimDeadzone = 0.01f;
+        // TURN CONTROL. The game turns the body in FixedUpdate by look.x * camerarotspeed DEGREES per
+        // physics step (and pitches the camera by look.z * camerarotspeed), eased by a DOTween, where
+        // camerarotspeed = the player's Camera Sensitivity setting * camerarotmultiplier. The old
+        // steering mapped error/45deg straight to look (full-speed for any error >= 45deg) and then
+        // re-sent that same command on every physics step until the next frame. That overshot, so the
+        // next command slammed the other way: the +1/-1 look flip-flop that left the player wobbling
+        // in place mid-route and swinging back and forth while facing the target. Now each physics
+        // step asks for only a FRACTION of the remaining error, converted through the live
+        // camerarotspeed, and FixedUpdate recomputes it from the current heading every step.
+        private const float TurnGainPerStep = 0.2f;        // fraction of the remaining error per physics step
+        private const float TravelAimDeadzoneDeg = 2f;      // good enough to walk toward a waypoint
+        private const float FinalAimDeadzoneDeg = 0.4f;     // tight enough to land the crosshair on a small prop
+
+        private static float CameraRotDegPerStep()
+        {
+            BetterPlayerControl bpc = BetterPlayerControl.Instance;
+            float s = bpc != null ? bpc.camerarotspeed : 0f;
+            // Unknown/zero speed: fall back to the old 45-degree scale expressed per step.
+            return s > 0.05f ? s : AutoWalkLookScaleDegrees * TurnGainPerStep;
+        }
+
+        // Convert an angular error (degrees) into a look-axis value for ONE physics step.
+        private static float LookAxisForError(float errorDeg, float deadzoneDeg)
+        {
+            if (Mathf.Abs(errorDeg) < deadzoneDeg) return 0f;
+            return Mathf.Clamp(errorDeg * TurnGainPerStep / CameraRotDegPerStep(), -1f, 1f);
+        }
 
         private static Vector3 GetLookInputTowardRouteTarget(Transform playerTransform, Vector3 targetPosition)
         {
-            return GetLookInputTowardRouteTarget(playerTransform, targetPosition, 0.05f);
+            return GetLookInputTowardRouteTarget(playerTransform, targetPosition, TravelAimDeadzoneDeg);
         }
 
-        private static Vector3 GetLookInputTowardRouteTarget(Transform playerTransform, Vector3 targetPosition, float deadzone)
+        private static Vector3 GetLookInputTowardRouteTarget(Transform playerTransform, Vector3 targetPosition, float deadzoneDeg)
         {
             Vector3 toTarget = targetPosition - playerTransform.position;
             Vector3 flatTarget = toTarget;
@@ -2010,13 +2053,8 @@ namespace DateEverythingAccess
 
             float yaw = 0f;
             if (flatTarget.sqrMagnitude > 0.0001f)
-            {
-                yaw = Mathf.Clamp(
-                    Vector3.SignedAngle(playerTransform.forward, flatTarget.normalized, Vector3.up) /
-                    AutoWalkLookScaleDegrees,
-                    -1f,
-                    1f);
-            }
+                yaw = LookAxisForError(
+                    Vector3.SignedAngle(playerTransform.forward, flatTarget.normalized, Vector3.up), deadzoneDeg);
 
             float pitch = 0f;
             Camera cam = Camera.main;
@@ -2027,12 +2065,10 @@ namespace DateEverythingAccess
                 {
                     float forward = Mathf.Max(0.001f, new Vector2(cameraLocalTarget.x, cameraLocalTarget.z).magnitude);
                     float pitchDegrees = Mathf.Atan2(cameraLocalTarget.y, forward) * Mathf.Rad2Deg;
-                    pitch = Mathf.Clamp(pitchDegrees / AutoWalkLookScaleDegrees, -1f, 1f);
+                    pitch = LookAxisForError(pitchDegrees, deadzoneDeg);
                 }
             }
 
-            if (Mathf.Abs(yaw) < deadzone) yaw = 0f;
-            if (Mathf.Abs(pitch) < deadzone) pitch = 0f;
             return new Vector3(yaw, 0f, pitch);
         }
 
@@ -2271,6 +2307,7 @@ namespace DateEverythingAccess
             _isAutoWalking = false;
             _manualAimPhase = false;
             _hasAutoWalkInput = false;  // stop re-asserting input in FixedUpdate
+            _steerMode = SteerNone;
             _lastAutoWalkProgressTime = 0f;
             _nextSimpleRouteDiagnosticTime = 0f;
             _lastNavigationTargetDebugSnapshot = null;
