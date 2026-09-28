@@ -5091,8 +5091,24 @@ namespace DateEverythingAccess
             for (int i = 0; i < ContainerDoorWords.Length; i++)
                 if (name.IndexOf(ContainerDoorWords[i], StringComparison.OrdinalIgnoreCase) >= 0)
                     return false;
+            // The crawlspace trapdoor and its ladder are a secret under the office closet rug:
+            // the player has to find them, so they only appear once encountered.
+            for (Transform t = interactable.transform; t != null; t = t.parent)
+            {
+                string n = t.name ?? string.Empty;
+                for (int i = 0; i < HiddenPassageWords.Length; i++)
+                    if (n.IndexOf(HiddenPassageWords[i], StringComparison.OrdinalIgnoreCase) >= 0)
+                        return false;
+                if (t == door.transform)
+                    break;
+            }
+            for (int i = 0; i < HiddenPassageWords.Length; i++)
+                if (name.IndexOf(HiddenPassageWords[i], StringComparison.OrdinalIgnoreCase) >= 0)
+                    return false;
             return true;
         }
+
+        private static readonly string[] HiddenPassageWords = { "trapdoor", "ladder", "crawlspace" };
 
         private static bool IsDoorInteractable(InteractableObj interactable)
         {
