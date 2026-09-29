@@ -128,7 +128,7 @@ namespace DateEverythingAccess
         private static void InitializeEnglish()
         {
             Add("mod_loaded", "Date Everything Access loaded. Focused items, dialogue, screen text, phone app text, rooms, nearby objects, and status changes are spoken automatically. F1 for help. Backtick repeats the last spoken line. L reports the current room and objects relative to the direction you are facing. Ctrl plus O tracks the current objective. O opens the known objects list. In the list, Up and Down move the selection, Enter selects, Backspace closes, Left and Right change the sort, F toggles this floor only, M cycles the section filter, and D toggles doors only. Alt plus O toggles auto-walk to the selected target. Ctrl+F1 opens accessibility settings.");
-            Add("help_text", "Date Everything Access. Focused items, dialogue, screen text, phone app text, rooms, nearby objects, and status changes can be spoken automatically. F1 for help. Backtick repeats the last spoken line. L reports the current room and objects relative to the direction you are facing. Ctrl plus O tracks the current objective. O opens the known objects list. In the list, Up and Down move the selection, Enter selects, Backspace closes, Left and Right change the sort, F toggles this floor only, M cycles the section filter, and D toggles doors only. Alt plus O toggles auto-walk to the selected target. Ctrl+F1 opens accessibility settings.");
+            Add("help_text", "Date Everything Access. Focused items, dialogue, screen text, phone app text, rooms, nearby objects, and status changes can be spoken automatically. F1 for help. Backtick repeats the last spoken line. L reports the current room and objects relative to the direction you are facing. Ctrl plus O tracks the current objective. O opens the known objects list. In the list, Up and Down move the selection, Enter selects, Backspace closes, Left and Right change the sort, F toggles this floor only, M cycles the section filter, and D toggles doors only. Alt plus O toggles auto-walk to the selected target; if you are already next to it, Alt plus O instead tells you which way to turn and look until you are aimed at it. Ctrl+F1 opens accessibility settings.");
             Add("debug_mode_enabled", "Debug mode enabled.");
             Add("debug_mode_enabled_with_mapping_dump", "Debug mode enabled. Current input mappings for {0} devices were written to the log.");
             Add("debug_mode_disabled", "Debug mode disabled.");
@@ -257,6 +257,21 @@ namespace DateEverythingAccess
             Add("room_downstairs_hall", "Downstairs hall");
             Add("room_upstairs_hall", "Upstairs hall");
             Add("navigation_object_picker_cabinets_group", "{0} cabinets");
+            Add("aim_coach_start", "{0} is within reach. Aim at it:");
+            Add("aim_coach_start_after_walk", "Arrived near {0}, but not aimed at it. Aim at it:");
+            Add("aim_coach_already_on", "{0}, already aimed at it.");
+            Add("aim_coach_on_target", "On target.");
+            Add("aim_coach_stopped", "Aiming help stopped.");
+            Add("aim_coach_gave_up", "Aiming help stopped. Press Alt+O to try again.");
+            Add("aim_coach_out_of_reach", "Out of reach from here. Press Alt+O to walk to it.");
+            Add("aim_left", "left");
+            Add("aim_right", "right");
+            Add("aim_up", "up");
+            Add("aim_down", "down");
+            Add("aim_little", "a little {0}");
+            Add("aim_far", "far {0}");
+            Add("aim_and", "{0} and {1}");
+            Add("aim_almost", "almost");
             Add("navigation_no_path", "No path found to {0}.");
             Add("navigation_tutorial_gift_delivery_trigger", "Gift delivery trigger");
             Add("navigation_planner_not_ready", "Navigation data not ready yet.");
@@ -470,6 +485,21 @@ namespace DateEverythingAccess
             AddJa("room_downstairs_hall", "1階の廊下");
             AddJa("room_upstairs_hall", "2階の廊下");
             AddJa("navigation_object_picker_cabinets_group", "{0}の戸棚");
+            AddJa("aim_coach_start", "{0}に手が届きます。狙いを合わせてください:");
+            AddJa("aim_coach_start_after_walk", "{0}の近くに着きましたが、狙いが合っていません。狙いを合わせてください:");
+            AddJa("aim_coach_already_on", "{0}、すでに狙いが合っています。");
+            AddJa("aim_coach_on_target", "狙いが合いました。");
+            AddJa("aim_coach_stopped", "狙いの案内を止めました。");
+            AddJa("aim_coach_gave_up", "狙いの案内を止めました。Alt+Oでもう一度試せます。");
+            AddJa("aim_coach_out_of_reach", "ここからは届きません。Alt+Oで近くまで歩きます。");
+            AddJa("aim_left", "左");
+            AddJa("aim_right", "右");
+            AddJa("aim_up", "上");
+            AddJa("aim_down", "下");
+            AddJa("aim_little", "少し{0}");
+            AddJa("aim_far", "大きく{0}");
+            AddJa("aim_and", "{0}、{1}");
+            AddJa("aim_almost", "もう少し");
             AddJa("navigation_no_path", "{0} への経路が見つかりません。");
             AddJa("navigation_tutorial_gift_delivery_trigger", "ギフト配達トリガー");
             AddJa("navigation_planner_not_ready", "ナビゲーションデータの準備がまだできていません。");

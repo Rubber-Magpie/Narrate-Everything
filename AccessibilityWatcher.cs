@@ -950,6 +950,7 @@ namespace DateEverythingAccess
             // while a text field or the settings menu is focused. Sampled every frame for the same
             // fast-tap reason as the section stepper.
             PollAccessibilityShortcutKeys();
+            UpdateAimCoach();
 
             bool isSettingsMenuOpen = ModConfig.IsMenuOpen;
             if (isSettingsMenuOpen)
@@ -1736,6 +1737,15 @@ namespace DateEverythingAccess
                         Main.Log.LogInfo("SimpleNav arrival: in range but the game did not select target=" +
                             (route.TargetName ?? "<null>") + " after " + AutoWalkFaceTimeoutSeconds +
                             "s of facing player=" + FormatVector3(playerPos) + " lookPoint=" + FormatVector3(lookPoint));
+                        InteractableObj coachTarget = FindSimpleRouteTargetObject(route) != null
+                            ? FindSimpleRouteTargetObject(route).GetComponent<InteractableObj>()
+                            : null;
+                        if (coachTarget != null && IsTargetAimableFromHere(coachTarget, out _))
+                        {
+                            StopNavigationRuntime();
+                            StartAimCoach(coachTarget, afterWalk: true);
+                            return;
+                        }
                         StopNavigationWithAnnouncement("navigation_arrived_not_selected");
                         return;
                     }
@@ -2446,6 +2456,7 @@ namespace DateEverythingAccess
             _isNavigationActive = false;
             _isAutoWalking = false;
             _manualAimPhase = false;
+            StopAimCoach();
             _hasAutoWalkInput = false;  // stop re-asserting input in FixedUpdate
             _steerMode = SteerNone;
             _lastAutoWalkProgressTime = 0f;
@@ -5287,9 +5298,25 @@ namespace DateEverythingAccess
                 return;
             }
 
+            if (_aimCoachActive)
+            {
+                StopAimCoach();
+                ScreenReader.Say(Loc.Get("aim_coach_stopped"));
+                return;
+            }
+
             if (!TryEnsureNavigationTarget(out string targetZone, out string targetLabel))
             {
                 ScreenReader.Say(Loc.Get("navigation_no_objective"));
+                return;
+            }
+
+            // Already standing by it: no walk needed, just talk the player's aim onto it.
+            if (!_hasNavigationWorldTarget &&
+                TryGetTrackedInteractable(out InteractableObj nearTarget) && nearTarget != null &&
+                IsTargetAimableFromHere(nearTarget, AimCoachStartWithinM, out _))
+            {
+                StartAimCoach(nearTarget, afterWalk: false);
                 return;
             }
 
