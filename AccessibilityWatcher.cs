@@ -4123,6 +4123,10 @@ namespace DateEverythingAccess
             // back out (Y above the ceiling line).
             bool playerInCrawlspace = playerTransform != null && playerPosition.y < CrawlspaceCeilingY;
 
+            // The kitchen cabinets are one character's set: finding any one of them reveals them
+            // all. (The laundry-room and bathroom cabinets still have to be found one by one.)
+            bool kitchenCabinetsKnown = !includeUnencountered && AnyKitchenCabinetEncountered();
+
             for (int i = 0; i < roster.Count; i++)
             {
                 SimpleNavPlanner.Fixture fixture = roster[i];
@@ -4167,6 +4171,7 @@ namespace DateEverythingAccess
                 if (!includeUnencountered &&
                     !IsStartupOfficeDoorObject(liveObj, fixture.name) &&
                     !IsAlwaysListedDoor(liveObj) &&
+                    !(kitchenCabinetsKnown && IsKitchenCabinet(liveObj)) &&
                     !IsEncounteredKnownObject(liveObj))
                 {
                     continue;
@@ -5186,16 +5191,47 @@ namespace DateEverythingAccess
 
         private static readonly string[] HiddenPassageWords = { "trapdoor", "ladder", "crawlspace" };
 
-        // A cupboard or cabinet (door, case or body), by the object's own name. Passage doors
-        // never match; food and things stored inside keep their own names so stay out.
+        // The cupboards and cabinets character. Matching on the character, not on names, keeps
+        // out things that merely have "cabinet" or "cupboard" in their name (record sleeves,
+        // sponges, a pitcher, boxes in the upstairs hall).
+        private const string CabinetInk = "cabrizzio_cabinet";
+
+        private static bool IsCabinetObject(InteractableObj io)
+        {
+            if (io == null || io.gameObject == null) return false;
+            if (string.Equals(io.inkFileName, CabinetInk, StringComparison.OrdinalIgnoreCase))
+                return true;
+            string n = io.gameObject.name ?? string.Empty;
+            return n.StartsWith("Cabinet_Bathroom", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsKitchenCabinet(InteractableObj io)
+        {
+            if (!IsCabinetObject(io)) return false;
+            return TryGetHierarchyRoomForInteractable(io, out string room) &&
+                string.Equals(room, RoomSpokenName("Kitchen"), StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool AnyKitchenCabinetEncountered()
+        {
+            InteractableObj[] all = FindObjectsOfType<InteractableObj>();
+            for (int i = 0; i < all.Length; i++)
+            {
+                InteractableObj io = all[i];
+                if (io == null || io.gameObject == null || !io.gameObject.activeInHierarchy) continue;
+                if (IsKitchenCabinet(io) && IsEncounteredKnownObject(io)) return true;
+            }
+            return false;
+        }
+
+        // A cupboard or cabinet (door, case or body). Passage doors never match; food and things
+        // stored inside belong to other characters so stay out.
         private static bool IsCabinetTarget(KnownObjectTarget t)
         {
             InteractableObj io = t != null ? t.Interactable : null;
             if (io == null || io.gameObject == null || t.IsDoor && IsAlwaysListedDoor(io))
                 return false;
-            string n = io.gameObject.name ?? string.Empty;
-            return n.IndexOf("cupboard", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                n.IndexOf("cabinet", StringComparison.OrdinalIgnoreCase) >= 0;
+            return IsCabinetObject(io);
         }
 
         private static bool IsDoorInteractable(InteractableObj interactable)
