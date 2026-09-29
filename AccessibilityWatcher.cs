@@ -5689,12 +5689,38 @@ namespace DateEverythingAccess
             if (interactable == null)
                 return false;
 
+            // The object's own room from the data hierarchy (House/LivingRoom/...) is enough to
+            // navigate to it. Only when that fails do we look for a stand-in, and then only among
+            // parts of the SAME datable: searching the whole house let an unrelated object win (the
+            // revealed dust bunny, whose own transforms sit at the world origin, was swapped for a
+            // sofa pillow, so Ctrl+O walked to the sofa).
+            if (interactable.gameObject != null && interactable.gameObject.activeInHierarchy &&
+                !TryGetZoneNameForInteractable(interactable, out _) &&
+                TryGetHierarchyRoomForInteractable(interactable, out string hierarchyRoom))
+            {
+                resolvedInteractable = interactable;
+                zoneName = hierarchyRoom;
+                return true;
+            }
+
             var candidates = new List<InteractableObj>();
             AddUniqueComponents(candidates, new[] { interactable });
             AddUniqueComponents(candidates, interactable.GetComponentsInParent<InteractableObj>(includeInactive: true));
             AddUniqueComponents(candidates, interactable.GetComponentsInChildren<InteractableObj>(includeInactive: true));
             if (interactable.transform.root != null)
-                AddUniqueComponents(candidates, interactable.transform.root.GetComponentsInChildren<InteractableObj>(includeInactive: true));
+            {
+                string ownName = interactable.InternalName();
+                InteractableObj[] houseWide = interactable.transform.root.GetComponentsInChildren<InteractableObj>(includeInactive: true);
+                var sameDatable = new List<InteractableObj>();
+                for (int h = 0; h < houseWide.Length; h++)
+                {
+                    InteractableObj c = houseWide[h];
+                    if (c != null && !string.IsNullOrEmpty(ownName) &&
+                        string.Equals(c.InternalName(), ownName, StringComparison.OrdinalIgnoreCase))
+                        sameDatable.Add(c);
+                }
+                AddUniqueComponents(candidates, sameDatable.ToArray());
+            }
 
             float bestScore = float.MinValue;
             for (int i = 0; i < candidates.Count; i++)
