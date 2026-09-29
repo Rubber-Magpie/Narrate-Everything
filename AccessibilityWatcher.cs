@@ -489,7 +489,14 @@ namespace DateEverythingAccess
             public KnownObjectTarget Target;
             // Group only: the members this group drills into (subset of _knownObjectTargets).
             public List<KnownObjectTarget> Members;
+            // Group only: the key the Objects level filters on, when it isn't the members'
+            // DatableKey (the per-room cabinets group).
+            public string GroupKey;
         }
+
+        // Key of the per-room "cabinets" group: encountered cupboards and cabinets collected
+        // into one sublist so a room full of them doesn't crowd the room's list.
+        private const string CabinetGroupKey = "\u0001cabinets";
 
         // The drill level the picker is currently showing: Rooms -> InRoom -> Objects.
         private enum PickerLevel { Rooms, InRoom, Objects }
@@ -1272,6 +1279,12 @@ namespace DateEverythingAccess
                     continue;
 
                 if (!HasVisibleRenderer(target.Interactable))
+                    continue;
+
+                // Belt and braces for the floor gate: nothing a whole storey above or below
+                // (floors are ~13 m apart; ceiling fixtures sit ~10 m up) is in view, whatever its roster entry says.
+                if (TryGetLiveBoundsCentre(target.Interactable, out Vector3 seen) &&
+                    Mathf.Abs(seen.y - playerPosition.y) > 11.5f)
                     continue;
 
                 if (!HasRoomScanLineOfSight(playerPosition, target.Interactable))
@@ -3922,7 +3935,8 @@ namespace DateEverythingAccess
                 case PickerGroupKind.Datable:
                     // L2 -> L3: enter the datable (within the already-chosen room); its found
                     // objects in this room are next. _pickerRoomZone stays as the chosen room.
-                    _pickerDatableKey = group.Members != null && group.Members.Count > 0 ? group.Members[0].DatableKey : null;
+                    _pickerDatableKey = group.GroupKey ??
+                        (group.Members != null && group.Members.Count > 0 ? group.Members[0].DatableKey : null);
                     _pickerDatableLabel = group.Label;
                     _pickerLevel = PickerLevel.Objects;
                     break;
@@ -4128,6 +4142,20 @@ namespace DateEverythingAccess
                 if (liveObj == null || liveObj.gameObject == null || !liveObj.gameObject.activeInHierarchy)
                     continue;
 
+                // A few roster entries were baked with a degenerate position (the gym's first
+                // trophy sits at the world origin, which is on the ground floor, so the look-around
+                // reported it from the kitchen below). When the live object is somewhere else
+                // entirely, trust where it really is and re-derive its floor from that.
+                bool rosterPositionBad = false;
+                if (TryGetLiveBoundsCentre(liveObj, out Vector3 liveCentre) &&
+                    (liveCentre - fixturePos).sqrMagnitude > 4f * 4f)
+                {
+                    fixturePos = liveCentre;
+                    rosterPositionBad = true;
+                    if (playerInCrawlspace && fixturePos.y >= CrawlspaceCeilingY)
+                        continue;
+                }
+
                 // SECOND-ORDER FILTER: only objects the player has encountered (met / interacted /
                 // examined) appear, plus the seeded startup office door. The roster defines what
                 // EXISTS; this narrows it to what THIS SAVE knows. Skipped when includeUnencountered
@@ -4163,7 +4191,7 @@ namespace DateEverythingAccess
 
                 // Prefer the roster's own floor assignment (it owns the ceiling-light "belongs to
                 // the room below" rule); fall back to resolving from Y when the roster left it null.
-                string candidateFloor = fixture.floor;
+                string candidateFloor = rosterPositionBad ? null : fixture.floor;
                 if (string.IsNullOrEmpty(candidateFloor))
                     SimpleNavPlanner.TryGetTargetFloorLabel(fixturePos.y, out candidateFloor);
                 bool onPlayerFloor = playerFloorLabel == null || candidateFloor == null ||
@@ -4210,6 +4238,25 @@ namespace DateEverythingAccess
                 AddUnrosteredPassageDoors(targets, playerTransform, playerPosition, playerFloorLabel);
 
             return targets.Count > 0 ? KnownObjectBuildResult.Ok : KnownObjectBuildResult.Empty;
+        }
+
+        // Centre of the live object's visible renderers (active ones only), if it has any.
+        private static bool TryGetLiveBoundsCentre(InteractableObj obj, out Vector3 centre)
+        {
+            centre = default;
+            if (obj == null) return false;
+            Renderer[] rends = obj.GetComponentsInChildren<Renderer>(includeInactive: false);
+            bool has = false;
+            Bounds b = default;
+            for (int i = 0; i < rends.Length; i++)
+            {
+                if (rends[i] == null || !rends[i].enabled) continue;
+                if (!has) { b = rends[i].bounds; has = true; }
+                else b.Encapsulate(rends[i].bounds);
+            }
+            if (!has) return false;
+            centre = b.center;
+            return true;
         }
 
         // Passage doors the bake roster doesn't carry. The office door and office closet door were
@@ -4786,6 +4833,7 @@ namespace DateEverythingAccess
             // Unmet objects route directly, but same-named ones collapse (deduped below) so a
             // multi-piece unmet object doesn't list once per piece.
             List<KnownObjectTarget> unmet = new List<KnownObjectTarget>();
+            List<KnownObjectTarget> cabinets = new List<KnownObjectTarget>();
             for (int i = 0; i < filtered.Count; i++)
             {
                 KnownObjectTarget t = filtered[i];
@@ -4809,10 +4857,36 @@ namespace DateEverythingAccess
                     }
                     AccumulateGroupMember(group, t);
                 }
+                else if (IsCabinetTarget(t))
+                {
+                    cabinets.Add(t);
+                }
                 else
                 {
                     unmet.Add(t);
                 }
+            }
+            if (DistinctLabelCount(cabinets) >= 2)
+            {
+                PickerNode cabinetGroup = new PickerNode
+                {
+                    IsGroup = true,
+                    GroupKind = PickerGroupKind.Datable,
+                    GroupKey = CabinetGroupKey,
+                    Label = Loc.Get("navigation_object_picker_cabinets_group",
+                        string.IsNullOrWhiteSpace(cabinets[0].Zone) ? Loc.Get("navigation_object_picker_room_unknown") : cabinets[0].Zone),
+                    Section = PickerSection.Encountered,
+                    Distance = float.MaxValue,
+                    Members = new List<KnownObjectTarget>(),
+                };
+                for (int i = 0; i < cabinets.Count; i++)
+                    AccumulateGroupMember(cabinetGroup, cabinets[i]);
+                cabinetGroup.ChildCount = DistinctLabelCount(cabinets);
+                view.Add(cabinetGroup);
+            }
+            else
+            {
+                unmet.AddRange(cabinets);
             }
             view.AddRange(DedupeLeavesByName(unmet));
             // The group count the player hears must match what drilling in reveals (deduped by
@@ -4880,6 +4954,8 @@ namespace DateEverythingAccess
 
         private bool IsInChosenDatable(KnownObjectTarget t)
         {
+            if (string.Equals(_pickerDatableKey, CabinetGroupKey, StringComparison.Ordinal))
+                return t.Section != PickerSection.Met && IsCabinetTarget(t);
             return t.Section == PickerSection.Met &&
                 !string.IsNullOrEmpty(_pickerDatableKey) &&
                 string.Equals(t.DatableKey, _pickerDatableKey, StringComparison.OrdinalIgnoreCase);
@@ -5110,6 +5186,18 @@ namespace DateEverythingAccess
 
         private static readonly string[] HiddenPassageWords = { "trapdoor", "ladder", "crawlspace" };
 
+        // A cupboard or cabinet (door, case or body), by the object's own name. Passage doors
+        // never match; food and things stored inside keep their own names so stay out.
+        private static bool IsCabinetTarget(KnownObjectTarget t)
+        {
+            InteractableObj io = t != null ? t.Interactable : null;
+            if (io == null || io.gameObject == null || t.IsDoor && IsAlwaysListedDoor(io))
+                return false;
+            string n = io.gameObject.name ?? string.Empty;
+            return n.IndexOf("cupboard", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                n.IndexOf("cabinet", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
         private static bool IsDoorInteractable(InteractableObj interactable)
         {
             if (interactable == null || interactable.gameObject == null)
@@ -5302,6 +5390,13 @@ namespace DateEverythingAccess
         // the substituted part through goName/goId, or null when no sibling is routable either.
         // Ordered TALLEST-FIRST: a part's height above its supporting furniture is what lets the
         // sightline clear the counter/desk edge that occluded the original pick. See the call site.
+        private const float SiblingPartMaxDistM = 4.5f;
+
+        private static Vector3 PartCentre(InteractableObj obj)
+        {
+            return TryGetLiveBoundsCentre(obj, out Vector3 c) ? c : obj.transform.position;
+        }
+
         private SimpleNavRoute TryPlanDatableSibling(
             InteractableObj target, Vector3 startPos, ref string goName, ref int goId)
         {
@@ -5310,6 +5405,7 @@ namespace DateEverythingAccess
 
             int originalId = target.gameObject != null ? target.gameObject.GetInstanceID() : 0;
             InteractableObj[] all = FindObjectsOfType<InteractableObj>();
+            Vector3 targetCentre = PartCentre(target);
 
             // Collect the sibling parts of this datable, tallest first.
             List<InteractableObj> siblings = new List<InteractableObj>();
@@ -5320,6 +5416,12 @@ namespace DateEverythingAccess
                 if (!c.gameObject.activeInHierarchy) continue;
                 if (c.gameObject.GetInstanceID() == originalId) continue;
                 if (!string.Equals(c.inkFileName, target.inkFileName, StringComparison.OrdinalIgnoreCase)) continue;
+                // Only parts of the SAME assembly. Some datables are spread through the house
+                // (every cupboard is one character), and a part in another room is not a stand-in
+                // for the one the player picked: the cookie cupboard fell back to the laundry-room
+                // cupboard. Keep siblings within a few metres of the original.
+                if ((PartCentre(c) - targetCentre).sqrMagnitude > SiblingPartMaxDistM * SiblingPartMaxDistM)
+                    continue;
                 siblings.Add(c);
             }
             if (siblings.Count == 0)

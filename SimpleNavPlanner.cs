@@ -524,9 +524,28 @@ namespace DateEverythingAccess
                 }
             }
 
-            List<NodeKey> path;
-            float totalCost;
-            if (!AStar(startNode, goals, goalFloor.Label, targetPos.x, targetPos.z, out path, out totalCost, goalQuality))
+            List<NodeKey> path = null;
+            float totalCost = 0f;
+            // BODY-ROOM GOALS: the bake grid is dilated for a 0.4 m capsule but the player's real
+            // capsule is 0.8 m, so a goal cell hard against a counter, wall or table leaves her
+            // pressing into it at the end of the walk (the kitchen-cupboard stall). Prefer goal cells
+            // with room for the real body; fall back to tighter tiers, then to the full set.
+            bool roomyPlanned = false;
+            for (int need = BodyGoalClearanceCells; need >= 2 && !roomyPlanned; need--)
+            {
+                List<NodeKey> roomy = GoalsWithClearance(goals, need);
+                if (roomy == null) continue;
+                if (AStar(startNode, roomy, goalFloor.Label, targetPos.x, targetPos.z, out path, out totalCost, goalQuality))
+                {
+                    roomyPlanned = true;
+                    if (Main.Log != null)
+                        Main.Log.LogInfo("SimpleNavPlanner.Plan: body-room goals clearance>=" + need +
+                            " kept " + roomy.Count + "/" + goals.Count + " for target=" + (targetName ?? "<null>"));
+                    goals = roomy;
+                }
+            }
+            if (!roomyPlanned &&
+                !AStar(startNode, goals, goalFloor.Label, targetPos.x, targetPos.z, out path, out totalCost, goalQuality))
             {
                 // The closed-state plan to the LOS goal cells failed. Retry only with DOORS
                 // RELAXED (every door assumed openable, state-walls released) on the SAME goal
@@ -3230,6 +3249,27 @@ namespace DateEverythingAccess
         // Take the door's freed cells that are walkable now, keep the largest connected piece,
         // and average the cells farthest from anything blocked (capped at 0.8 m, so a wide gap
         // averages to its middle line). Sliding doors keep the baked point.
+        // Goal cells need this many cells (0.2 m each) of clearance for the real 0.8 m capsule to
+        // stand without touching anything the 0.4 m bake dilation already accounts for.
+        private const int BodyGoalClearanceCells = 3;
+
+        // The subset of goals with at least `need` clearance, or null when that subset is empty or
+        // is the whole set (nothing to prefer).
+        private static List<NodeKey> GoalsWithClearance(List<NodeKey> goals, int need)
+        {
+            if (goals == null || goals.Count == 0) return null;
+            var keep = new List<NodeKey>();
+            for (int i = 0; i < goals.Count; i++)
+            {
+                NodeKey g = goals[i];
+                if (IsVirtual(g)) { keep.Add(g); continue; }
+                Floor f = FloorByLabel(g.Floor);
+                if (f != null && f.Clearance(g.Ix, g.Iz) >= need) keep.Add(g);
+            }
+            if (keep.Count == 0 || keep.Count == goals.Count) return null;
+            return keep;
+        }
+
         private static bool TryGetSwingDoorwayCentre(Floor floor, string door, Vector3 baked, out Vector3 centre)
         {
             centre = baked;
