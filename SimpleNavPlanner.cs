@@ -493,6 +493,45 @@ namespace DateEverythingAccess
                             " (discarded back-of-object standpoints).");
                 }
 
+                // LOOK-ANGLE LIMIT: the game won't tilt the camera more than about 70 degrees up or
+                // down. From a spot right next to something on the floor (the dust bunny, the Key)
+                // the look needed is steeper than that, so the player can never aim at it however
+                // long she holds the down arrow. Drop standpoints that need too steep a look when
+                // others remain.
+                if (losClear.Count > 0)
+                {
+                    float eyeH = LiveEyeHeightM();
+                    float maxPitch = LiveMaxCameraPitchDeg() - LookPitchMarginDeg;
+                    var okGoals = new List<NodeKey>(losClear.Count);
+                    var okPassed = new List<HashSet<string>>(losClear.Count);
+                    var okClear = new List<float>(losClear.Count);
+                    for (int i = 0; i < losClear.Count; i++)
+                    {
+                        Vector2 cw = goalFloor.CellToWorld(losClear[i].Ix, losClear[i].Iz);
+                        Vector3 eyePos = new Vector3(cw.x, goalFloor.FloorY + eyeH, cw.y);
+                        Vector3 aimAt = targetCollider.ClosestPointOnBounds(eyePos);
+                        float horiz = new Vector2(aimAt.x - eyePos.x, aimAt.z - eyePos.z).magnitude;
+                        float pitch = Mathf.Atan2(Mathf.Abs(aimAt.y - eyePos.y), Mathf.Max(0.01f, horiz)) * Mathf.Rad2Deg;
+                        if (pitch > maxPitch) continue;
+                        okGoals.Add(losClear[i]);
+                        okPassed.Add(passedOf[i]);
+                        okClear.Add(clearanceOf[i]);
+                    }
+                    if (okGoals.Count > 0 && okGoals.Count < losClear.Count)
+                    {
+                        if (Main.Log != null)
+                            Main.Log.LogInfo("SimpleNavPlanner.Plan: look-angle limit kept " + okGoals.Count + "/" +
+                                losClear.Count + " standpoints for target=" + (targetName ?? "<null>") +
+                                " (eye " + eyeH.ToString("F2") + " m, max " + maxPitch.ToString("F0") + " deg)");
+                        losClear = okGoals;
+                        passedOf = okPassed;
+                        clearanceOf = okClear;
+                        bestClearance = 0f;
+                        for (int i = 0; i < clearanceOf.Count; i++)
+                            if (clearanceOf[i] > bestClearance) bestClearance = clearanceOf[i];
+                    }
+                }
+
                 if (losClear.Count > 0)
                 {
                     // CLOSEST-CLEAR-CELL: prefer SOLIDLY-clear standpoints over edge-grazing ones.
@@ -2421,6 +2460,47 @@ namespace DateEverythingAccess
         // interaction ray originates at the player camera; ~1.6m is a standing eye height and
         // matches where the camera sits on the player capsule.
         private const float InteractionEyeHeightM = 1.6f;
+        private const float LookPitchMarginDeg = 8f;
+        private static System.Reflection.FieldInfo _maxRotField;
+        private static bool _maxRotFieldLooked;
+
+        // The live camera height above the player's feet (the capsule is scaled 2x, so the
+        // bake-era 1.6 m guess is well short), falling back to that guess.
+        public static float LiveEyeHeightM()
+        {
+            BetterPlayerControl bpc = BetterPlayerControl.Instance;
+            Camera cam = Camera.main;
+            if (bpc != null && cam != null)
+            {
+                float h = cam.transform.position.y - bpc.transform.position.y;
+                if (h > 0.5f && h < 8f) return h;
+            }
+            return InteractionEyeHeightM;
+        }
+
+        // How far the game lets the camera tilt up or down (BetterPlayerControl.maxrot, 70 by
+        // default), read live so a tuned value is respected.
+        public static float LiveMaxCameraPitchDeg()
+        {
+            if (!_maxRotFieldLooked)
+            {
+                _maxRotFieldLooked = true;
+                _maxRotField = typeof(BetterPlayerControl).GetField("maxrot",
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public |
+                    System.Reflection.BindingFlags.NonPublic);
+            }
+            BetterPlayerControl bpc = BetterPlayerControl.Instance;
+            if (_maxRotField != null && bpc != null)
+            {
+                try
+                {
+                    object v = _maxRotField.GetValue(bpc);
+                    if (v is float f && f > 10f && f < 90f) return f;
+                }
+                catch { }
+            }
+            return 70f;
+        }
 
         // A cell is only a valid standpoint if its sightline to the target is comfortably inside the
         // interaction radius, not grazing the rim. The outer edge of the radius is where the line is

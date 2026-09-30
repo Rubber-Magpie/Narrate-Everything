@@ -271,6 +271,7 @@ namespace DateEverythingAccess
             Add("aim_little", "a little {0}");
             Add("aim_far", "far {0}");
             Add("aim_and", "{0} and {1}");
+            Add("aim_step_back", "too steep, step back");
             Add("navigation_no_path", "No path found to {0}.");
             Add("navigation_tutorial_gift_delivery_trigger", "Gift delivery trigger");
             Add("navigation_planner_not_ready", "Navigation data not ready yet.");
@@ -498,6 +499,7 @@ namespace DateEverythingAccess
             AddJa("aim_little", "少し{0}");
             AddJa("aim_far", "大きく{0}");
             AddJa("aim_and", "{0}、{1}");
+            AddJa("aim_step_back", "角度が急すぎます。少し下がってください");
             AddJa("navigation_no_path", "{0} への経路が見つかりません。");
             AddJa("navigation_tutorial_gift_delivery_trigger", "ギフト配達トリガー");
             AddJa("navigation_planner_not_ready", "ナビゲーションデータの準備がまだできていません。");

@@ -212,6 +212,14 @@ namespace DateEverythingAccess
             float horiz = Mathf.Max(0.001f, new Vector2(local.x, local.z).magnitude);
             float pitchErr = Mathf.Atan2(local.y, horiz) * Mathf.Rad2Deg;
 
+            // The game stops tilting the camera at about 70 degrees up or down. When the target
+            // needs a steeper look than that (something on the floor right at her feet), "down"
+            // can never be reached however long the arrow is held: step back to flatten the angle.
+            float flatDist = Mathf.Max(0.01f, new Vector2(toAim.x, toAim.z).magnitude);
+            float neededElevation = Mathf.Atan2(toAim.y, flatDist) * Mathf.Rad2Deg;
+            if (Mathf.Abs(neededElevation) > SimpleNavPlanner.LiveMaxCameraPitchDeg() - 2f)
+                return Loc.Get("aim_step_back");
+
             // How close counts as "on it": half the target's apparent size, within sane limits.
             float tol = 1f;
             Collider col = target.GetComponentInChildren<Collider>();
