@@ -1944,8 +1944,19 @@ namespace DateEverythingAccess
             // indefinitely, so a stuck turn still trips the timeout.
             bool tryingToTranslate = !waitingForDoorSwing;
             bool turningToAlign = !headingAligned;
-            if (Vector3.Distance(playerPos, _lastAutoWalkPosition) >= AutoWalkProgressDistance)
+            // Progress means getting CLOSER to the waypoint, not just moving: sliding back and forth
+            // along something the bake doesn't know about (the open crawlspace trapdoor) covered
+            // plenty of ground without gaining any, so the stall recovery never kicked in.
+            float toWaypointDist = GetFlatDistance(playerPos, target);
+            bool newWaypoint = (target - _progressWaypoint).sqrMagnitude > 0.01f;
+            if (newWaypoint)
             {
+                _progressWaypoint = target;
+                _progressBestDist = toWaypointDist;
+            }
+            if (newWaypoint || toWaypointDist <= _progressBestDist - AutoWalkProgressDistance)
+            {
+                if (toWaypointDist < _progressBestDist) _progressBestDist = toWaypointDist;
                 _lastAutoWalkPosition = playerPos;
                 _lastAutoWalkProgressTime = Time.unscaledTime;
                 ClearNavigationBlockedDetail();
@@ -2188,6 +2199,8 @@ namespace DateEverythingAccess
         private const float DoorTargetDoneWithinM = 3.0f;
         private const float DoorFaceToleranceDeg = 2f;
         private bool _doorTargetReplanPending;
+        private Vector3 _progressWaypoint = new Vector3(float.NaN, 0f, 0f);
+        private float _progressBestDist = float.MaxValue;
 
         private static bool IsRouteTargetDoorWithFrame(SimpleNavRoute route, DoorPortal door, Vector3 playerPos)
         {
