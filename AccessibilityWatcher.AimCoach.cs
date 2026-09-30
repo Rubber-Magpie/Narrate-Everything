@@ -54,27 +54,73 @@ namespace DateEverythingAccess
             return GetFlatDistance(bpc.transform.position, aimPoint) <= reach;
         }
 
-        // A point on the target that the game's own camera ray would select from camPos.
+        // A point on the target that the game's own camera ray would select from camPos. Of the
+        // candidate points, the one with the most margin wins: one whose neighbouring rays (a
+        // fraction of a degree either way) also select the target. The first point that merely
+        // worked was often the very edge of the object, so the automatic final nudge landed a
+        // hair off it and the game picked the furniture behind; and as the camera moved, the pick
+        // jumped between points, so the cues flipped left, right, left.
+        private const float AimRobustOffsetDeg = 0.75f;
+        private const float AimNoiseDeg = 0.6f;
+        // While coaching, the point being aimed at; kept as long as it still works well.
+        private static Vector3? _aimCoachKeepPoint;
+
         private static bool TryFindSelectableAimPoint(InteractableObj target, Vector3 camPos, out Vector3 aimPoint)
         {
             aimPoint = default;
+            if (_aimCoachKeepPoint.HasValue)
+            {
+                Vector3 kd = _aimCoachKeepPoint.Value - camPos;
+                if (kd.sqrMagnitude > 1e-6f &&
+                    SimpleNavPlanner.GameRayWouldSelect(camPos, kd.normalized, target) &&
+                    RobustSelectCount(target, camPos, kd.normalized) >= 3)
+                {
+                    aimPoint = _aimCoachKeepPoint.Value;
+                    return true;
+                }
+            }
+            int bestScore = -1;
             Collider[] cols = target.GetComponentsInChildren<Collider>();
-            for (int c = 0; c < cols.Length; c++)
+            for (int c = 0; c < cols.Length && bestScore < 5; c++)
             {
                 if (cols[c] == null || !cols[c].enabled) continue;
                 List<Vector3> aims = SimpleNavPlanner.AimCandidates(cols[c], camPos);
-                for (int a = 0; a < aims.Count; a++)
+                // The middle of the object first: it has the most room all round.
+                if (aims.Count > 1) { Vector3 t0 = aims[0]; aims[0] = aims[1]; aims[1] = t0; }
+                for (int a = 0; a < aims.Count && bestScore < 5; a++)
                 {
                     Vector3 d = aims[a] - camPos;
                     if (d.sqrMagnitude < 1e-6f) continue;
-                    if (SimpleNavPlanner.GameRayWouldSelect(camPos, d.normalized, target))
+                    Vector3 dir = d.normalized;
+                    if (!SimpleNavPlanner.GameRayWouldSelect(camPos, dir, target)) continue;
+                    int score = 1 + RobustSelectCount(target, camPos, dir);
+                    if (score > bestScore)
                     {
+                        bestScore = score;
                         aimPoint = aims[a];
-                        return true;
                     }
                 }
             }
-            return false;
+            return bestScore > 0;
+        }
+
+        // How many of the four rays a little left, right, above and below `dir` also select it.
+        private static int RobustSelectCount(InteractableObj target, Vector3 camPos, Vector3 dir)
+        {
+            Vector3 right = Vector3.Cross(Vector3.up, dir);
+            if (right.sqrMagnitude < 1e-6f) right = Vector3.right;
+            right.Normalize();
+            int n = 0;
+            Vector3[] probes =
+            {
+                Quaternion.AngleAxis(AimRobustOffsetDeg, Vector3.up) * dir,
+                Quaternion.AngleAxis(-AimRobustOffsetDeg, Vector3.up) * dir,
+                Quaternion.AngleAxis(AimRobustOffsetDeg, right) * dir,
+                Quaternion.AngleAxis(-AimRobustOffsetDeg, right) * dir,
+            };
+            for (int i = 0; i < probes.Length; i++)
+                if (SimpleNavPlanner.GameRayWouldSelect(camPos, probes[i], target)) n++;
+            return n;
         }
 
         private static bool IsAimCoachTargetSelected(InteractableObj target)
@@ -125,11 +171,17 @@ namespace DateEverythingAccess
             _aimCoachLastCue = null;
             if (_aimFineActive) EndAimFine();
             _aimFineSince = 0f;
+            _aimFineGaveUp = false;
+            _aimCoachKeepPoint = null;
         }
 
         private bool _aimFineActive;
         private Vector3 _aimFinePoint;
         private float _aimFineSince;
+        // The automatic nudge ran out of time without the game picking the target; don't restart
+        // it until the player has moved the aim away and back (it was re-starting every frame and
+        // fighting the player's own taps).
+        private bool _aimFineGaveUp;
         private const float AimCoachFineAssistDeg = 8f;
         private const float AimCoachFineMaxSeconds = 3f;
 
@@ -194,22 +246,33 @@ namespace DateEverythingAccess
                 out Vector3 aimPoint, out bool tooSteep);
             bool fine = aimable && !tooSteep &&
                 Mathf.Max(Mathf.Abs(yawErr), Mathf.Abs(pitchErr)) <= AimCoachFineAssistDeg;
-            if (fine)
+            _aimCoachKeepPoint = aimable ? aimPoint : (Vector3?)null;
+            if (fine && !_aimFineGaveUp)
             {
                 if (!_aimFineActive && Main.Log != null)
                     Main.Log.LogInfo("AimCoach: fine finish yaw=" + yawErr.ToString("F1") + " pitch=" + pitchErr.ToString("F1"));
                 _aimFineActive = true;
                 _aimFinePoint = aimPoint;
-                _aimFineSince = _aimFineSince == 0f ? Time.unscaledTime : _aimFineSince;
+                if (_aimFineSince == 0f) _aimFineSince = Time.unscaledTime;
                 // Give up the automatic nudge if it can't land (something in the way): hand back.
                 if (Time.unscaledTime - _aimFineSince < AimCoachFineMaxSeconds)
                     return;
                 EndAimFine();
+                _aimFineGaveUp = true;
+                if (Main.Log != null)
+                {
+                    InteractableManager im = Singleton<InteractableManager>.Instance;
+                    string picked = im != null && im.activeObject != null ? im.activeObject.gameObject.name : "<nothing>";
+                    Main.Log.LogInfo("AimCoach: fine finish gave up yaw=" + yawErr.ToString("F1") + " pitch=" +
+                        pitchErr.ToString("F1") + " game selected=" + picked +
+                        " inRange=" + (im != null && im.IsPlayerInRange) + " aim=" + aimPoint.ToString("F2"));
+                }
             }
-            else
+            else if (!fine)
             {
                 if (_aimFineActive) EndAimFine();
                 _aimFineSince = 0f;
+                _aimFineGaveUp = false;
             }
 
             if (Time.unscaledTime - _aimCoachLastSpokeAt < AimCoachMinGapSeconds)
@@ -312,6 +375,10 @@ namespace DateEverythingAccess
             // Within the target's own size on both axes but the game hasn't picked it yet: the
             // crosshair is on its edge. Nudge toward the aim point by the larger remaining error
             // ("a little up"), which is something the player can act on.
+            // A few tenths of a degree either way is noise, not a direction: saying "a little left",
+            // then "a little right" as it wobbles only sends the player back and forth.
+            if (h == null && v == null && Mathf.Max(Mathf.Abs(yawErr), Mathf.Abs(pitchErr)) < AimNoiseDeg)
+                return null;
             if (h == null && v == null)
                 return Mathf.Abs(yawErr) >= Mathf.Abs(pitchErr)
                     ? Loc.Get("aim_little", yawErr > 0f ? Loc.Get("aim_right") : Loc.Get("aim_left"))
