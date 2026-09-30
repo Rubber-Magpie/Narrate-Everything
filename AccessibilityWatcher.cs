@@ -1015,7 +1015,11 @@ namespace DateEverythingAccess
         // FixedUpdate so the value is always present when the game actually reads it.
         private void FixedUpdate()
         {
-            if (Main.IsShuttingDown || !_isAutoWalking || !_hasAutoWalkInput)
+            if (Main.IsShuttingDown)
+                return;
+            if (_aimFineActive)
+                ApplyAimFineStep();
+            if (!_isAutoWalking || !_hasAutoWalkInput)
                 return;
             if (BetterPlayerControl.Instance == null)
                 return;

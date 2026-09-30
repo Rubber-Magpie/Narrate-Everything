@@ -123,6 +123,38 @@ namespace DateEverythingAccess
             _aimCoachActive = false;
             _aimCoachTarget = null;
             _aimCoachLastCue = null;
+            if (_aimFineActive) EndAimFine();
+            _aimFineSince = 0f;
+        }
+
+        private bool _aimFineActive;
+        private Vector3 _aimFinePoint;
+        private float _aimFineSince;
+        private const float AimCoachFineAssistDeg = 8f;
+        private const float AimCoachFineMaxSeconds = 3f;
+
+        private void EndAimFine()
+        {
+            _aimFineActive = false;
+            ApplyLookOnly(Vector3.zero);
+        }
+
+        // Called from FixedUpdate: one small, proportional camera step toward the aim point.
+        private void ApplyAimFineStep()
+        {
+            if (!_aimFineActive || !_aimCoachActive || BetterPlayerControl.Instance == null)
+                return;
+            Vector3 look = GetLookInputTowardRouteTarget(BetterPlayerControl.Instance.transform, _aimFinePoint, 0.2f);
+            ApplyLookOnly(look);
+        }
+
+        // Write only the look axis, leaving movement to the player.
+        private static void ApplyLookOnly(Vector3 lookInput)
+        {
+            if (BetterPlayerControl.Instance == null) return;
+            EnsureReflectionCache();
+            if (_betterPlayerControlLookField == null) return;
+            _betterPlayerControlLookField.SetValue(BetterPlayerControl.Instance, lookInput);
         }
 
         // Called every frame from Update.
@@ -155,10 +187,34 @@ namespace DateEverythingAccess
                 return;
             }
 
+            // FINE FINISH. The game's smallest arrow tap still moves the camera several degrees,
+            // which overshoots a small target. Once the player has it within a few degrees, the
+            // mod makes the last tiny correction itself (see FixedUpdate) and stays quiet.
+            string cue = BuildAimCue(target, out bool aimable, out float yawErr, out float pitchErr,
+                out Vector3 aimPoint, out bool tooSteep);
+            bool fine = aimable && !tooSteep &&
+                Mathf.Max(Mathf.Abs(yawErr), Mathf.Abs(pitchErr)) <= AimCoachFineAssistDeg;
+            if (fine)
+            {
+                if (!_aimFineActive && Main.Log != null)
+                    Main.Log.LogInfo("AimCoach: fine finish yaw=" + yawErr.ToString("F1") + " pitch=" + pitchErr.ToString("F1"));
+                _aimFineActive = true;
+                _aimFinePoint = aimPoint;
+                _aimFineSince = _aimFineSince == 0f ? Time.unscaledTime : _aimFineSince;
+                // Give up the automatic nudge if it can't land (something in the way): hand back.
+                if (Time.unscaledTime - _aimFineSince < AimCoachFineMaxSeconds)
+                    return;
+                EndAimFine();
+            }
+            else
+            {
+                if (_aimFineActive) EndAimFine();
+                _aimFineSince = 0f;
+            }
+
             if (Time.unscaledTime - _aimCoachLastSpokeAt < AimCoachMinGapSeconds)
                 return;
 
-            string cue = BuildAimCue(target, out bool aimable);
             if (!aimable)
             {
                 // Walked out of reach, or something now hides it from this spot.
@@ -187,7 +243,17 @@ namespace DateEverythingAccess
         // target can be selected from here.
         private static string BuildAimCue(InteractableObj target, out bool aimable)
         {
+            return BuildAimCue(target, out aimable, out _, out _, out _, out _);
+        }
+
+        private static string BuildAimCue(InteractableObj target, out bool aimable,
+            out float yawErrOut, out float pitchErrOut, out Vector3 aimOut, out bool tooSteep)
+        {
             aimable = false;
+            yawErrOut = 0f;
+            pitchErrOut = 0f;
+            aimOut = default;
+            tooSteep = false;
             Camera cam = Camera.main;
             BetterPlayerControl bpc = BetterPlayerControl.Instance;
             if (cam == null || bpc == null || target == null)
@@ -211,6 +277,9 @@ namespace DateEverythingAccess
             Vector3 local = cam.transform.InverseTransformDirection(toAim);
             float horiz = Mathf.Max(0.001f, new Vector2(local.x, local.z).magnitude);
             float pitchErr = Mathf.Atan2(local.y, horiz) * Mathf.Rad2Deg;
+            yawErrOut = yawErr;
+            pitchErrOut = pitchErr;
+            aimOut = aim;
 
             // The game stops tilting the camera at about 70 degrees up or down. When the target
             // needs a steeper look than that (something on the floor right at her feet), "down"
@@ -218,7 +287,10 @@ namespace DateEverythingAccess
             float flatDist = Mathf.Max(0.01f, new Vector2(toAim.x, toAim.z).magnitude);
             float neededElevation = Mathf.Atan2(toAim.y, flatDist) * Mathf.Rad2Deg;
             if (Mathf.Abs(neededElevation) > SimpleNavPlanner.LiveMaxCameraPitchDeg() - 2f)
+            {
+                tooSteep = true;
                 return Loc.Get("aim_step_back");
+            }
 
             // How close counts as "on it": half the target's apparent size, within sane limits.
             float tol = 1f;
