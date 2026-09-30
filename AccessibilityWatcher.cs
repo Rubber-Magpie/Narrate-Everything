@@ -3362,7 +3362,9 @@ namespace DateEverythingAccess
                 if (IsEncounteredKnownObject(candidate))
                     continue;
 
-                Vector3 candidatePos = candidate.transform.position;
+                // Rendered centre, not the transform: a few datables (the dust bunny, the armchair
+                // blanket) have transforms parked at the world origin.
+                Vector3 candidatePos = PartCentre(candidate);
                 // Room name from the data hierarchy, falling back to the spatial bounds — same room
                 // model the picker shows the player, so what they hear matches the room list.
                 if (!TryGetHierarchyRoomForInteractable(candidate, out string room))
@@ -3688,6 +3690,19 @@ namespace DateEverythingAccess
                 return;
             }
 
+            // Something undiscovered right where the player is beats a situational datable across
+            // the house (standing in the laundry closet with Hoove unmet, Ctrl+O went upstairs to
+            // the air vent). Announced as the room, like the "find more datables" nudge below.
+            bool haveNudge = TryResolveUnexploredNudge(out InteractableObj nudgeTarget, out string nudgeZone,
+                out string nudgeLabel, out float nudgeDistance, out bool nudgeSameFloor);
+            if (haveNudge && nudgeSameFloor && nudgeDistance <= NearbyUndiscoveredM)
+            {
+                LogObjectivePick("nearby-undiscovered", nudgeTarget, nudgeZone, nudgeLabel);
+                SetTrackedInteractable(nudgeTarget, nudgeZone, nudgeLabel);
+                BeginNavigationAndStartTrackerTone(nudgeZone, nudgeLabel);
+                return;
+            }
+
             // No specific objective — a context default takes priority over the generic
             // "find more datables" objective.
             if (TryResolveContextDefaultTarget(out InteractableObj contextInteractable, out string contextZone, out string contextLabel))
@@ -3708,7 +3723,43 @@ namespace DateEverythingAccess
                 return;
             }
 
+            // No objective the mod recognises (the mid-game gap between the early "find more
+            // datables" stage and the endgame): still offer the nearest room with something
+            // undiscovered, as long as there is one.
+            if (haveNudge)
+            {
+                LogObjectivePick("default-undiscovered", nudgeTarget, nudgeZone, nudgeLabel);
+                SetTrackedInteractable(nudgeTarget, nudgeZone, nudgeLabel);
+                BeginNavigationAndStartTrackerTone(nudgeZone, nudgeLabel);
+                return;
+            }
+
             ScreenReader.Say(Loc.Get("navigation_no_objective"));
+        }
+
+        private const float NearbyUndiscoveredM = 8f;
+
+        // The nearest room holding an undiscovered datable, as a navigation target: the member to
+        // route to, its zone, the room name to announce, and how far away it is.
+        private bool TryResolveUnexploredNudge(out InteractableObj interactable, out string zone,
+            out string label, out float distance, out bool sameFloor)
+        {
+            interactable = null; zone = null; label = null; distance = float.MaxValue; sameFloor = false;
+            if (BetterPlayerControl.Instance == null)
+                return false;
+            if (!TryResolveNearestUnexploredRoomTarget(out InteractableObj member, out string roomLabel) || member == null)
+                return false;
+            if (!TryResolveNavigableInteractable(member, out InteractableObj resolved, out zone) || resolved == null)
+                return false;
+            interactable = resolved;
+            label = roomLabel;
+            Vector3 playerPos = BetterPlayerControl.Instance.transform.position;
+            Vector3 at = PartCentre(member);
+            distance = GetFlatDistance(playerPos, at);
+            sameFloor = !SimpleNavPlanner.TryGetPlayerFloorLabel(playerPos.y, out string pf) ||
+                !SimpleNavPlanner.TryGetTargetFloorLabel(at.y, out string tf) ||
+                string.Equals(pf, tf, StringComparison.OrdinalIgnoreCase);
+            return true;
         }
 
         private static void LogObjectivePick(string branch, InteractableObj target, string zone, string label)
