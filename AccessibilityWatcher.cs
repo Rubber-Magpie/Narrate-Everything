@@ -1764,6 +1764,15 @@ namespace DateEverythingAccess
                         }
                     }
 
+                    // Face the point just beyond the doorway: square-on when the player stands
+                    // centred in front, along the clear line when she had to stand at an angle.
+                    if (SimpleNavPlanner.TryGetDoorwayFarPoint(frameDoor.gameObject.name, playerPos, out Vector3 farPoint))
+                    {
+                        Vector3 toFar = farPoint - playerPos;
+                        toFar.y = 0f;
+                        if (toFar.sqrMagnitude > 0.04f)
+                            through = toFar.normalized;
+                    }
                     Vector3 flatFwd = playerTransform.forward;
                     flatFwd.y = 0f;
                     float yawErr = flatFwd.sqrMagnitude > 1e-6f

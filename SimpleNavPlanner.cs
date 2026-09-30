@@ -3371,55 +3371,128 @@ namespace DateEverythingAccess
             return true;
         }
 
-        // Door-target goals squarely in front of the doorway on the player's side, so that when
-        // the walk ends, walking straight forward goes through. Null when none qualify.
+        // Door-target goals in front of the doorway on the player's side, so that when the walk
+        // ends, walking straight forward goes through. Null when none qualify.
+        //  * Door CLOSED (`goals` = the door's operable cells): cells squarely in front, far enough
+        //    back that the real 0.8 m body clears the frame (the bake grid only allows for 0.4 m).
+        //  * Door OPEN (`goals` null): any walkable cell in front from which a straight line
+        //    through the middle of the doorway into the room beyond is clear. A door that swings
+        //    toward the player can lie across the square-on approach once open (the office
+        //    closet), so the best line may be a slight angle; the executor then faces along it.
         private const float DoorFrontLateralM = 0.35f;
-        private const float DoorFrontMinDepthM = 0.7f;
-
+        private const float DoorFrontMinDepthM = 1.2f;
         private const float DoorFrontMaxDepthM = 3.0f;
 
-        // `goals` null = consider every walkable cell in front (door already open).
         private static List<NodeKey> FrontOfDoorwayGoals(Floor floor, string doorName, Vector3 startPos, List<NodeKey> goals)
         {
             if (goals != null && goals.Count == 0) return null;
             if (!TryGetDoorwayFrame(floor, doorName, startPos, out Vector3 c, out Vector3 through))
                 return null;
-            if (goals == null)
+            Vector3 across = new Vector3(through.z, 0f, -through.x);
+
+            if (goals != null)
             {
-                goals = new List<NodeKey>();
-                float r = DoorFrontMaxDepthM + DoorFrontLateralM * 2f;
-                floor.WorldToCell(c.x - r, c.z - r, out int x0, out int z0);
-                floor.WorldToCell(c.x + r, c.z + r, out int x1, out int z1);
+                for (int pass = 0; pass < 2; pass++)
+                {
+                    float lateral = pass == 0 ? DoorFrontLateralM : DoorFrontLateralM * 2f;
+                    var keep = new List<NodeKey>();
+                    for (int i = 0; i < goals.Count; i++)
+                    {
+                        NodeKey g = goals[i];
+                        if (IsVirtual(g) || g.Floor != floor.Label) continue;
+                        Vector2 w = floor.CellToWorld(g.Ix, g.Iz);
+                        float dx = w.x - c.x, dz = w.y - c.z;
+                        float depth = dx * through.x + dz * through.z;      // negative = player's side
+                        float lat = dx * across.x + dz * across.z;
+                        if (depth <= -DoorFrontMinDepthM && Mathf.Abs(lat) <= lateral)
+                            keep.Add(g);
+                    }
+                    if (keep.Count > 0) return keep;
+                }
+                return null;
+            }
+
+            // Door open: straight, clear lines through the doorway.
+            if (!TryGetDoorwayFarCell(floor, c, through, out NodeKey far))
+                return null;
+            float r = DoorFrontMaxDepthM;
+            floor.WorldToCell(c.x - r, c.z - r, out int x0, out int z0);
+            floor.WorldToCell(c.x + r, c.z + r, out int x1, out int z1);
+            // Tiers: square-ish and well back first; closer and at a steeper angle only when the
+            // open door leaves nothing better (the office closet's door lies across its front).
+            float[] minDepths = { DoorFrontMinDepthM, 0.8f };
+            float[] maxAngles = { 40f, 60f };
+            for (int tier = 0; tier < minDepths.Length; tier++)
+            for (int need = 2; need >= 0; need--)
+            {
+                var keep = new List<NodeKey>();
+                var angleOf = new List<float>();
+                float bestAngle = float.MaxValue;
                 for (int ix = x0; ix <= x1; ix++)
                     for (int iz = z0; iz <= z1; iz++)
                     {
                         if (!floor.Navigable(ix, iz)) continue;
                         Vector2 w = floor.CellToWorld(ix, iz);
-                        float depth = (w.x - c.x) * through.x + (w.y - c.z) * through.z;
-                        if (depth < -DoorFrontMaxDepthM) continue;
-                        goals.Add(new NodeKey(floor.Label, ix, iz));
+                        float dx = w.x - c.x, dz = w.y - c.z;
+                        float depth = dx * through.x + dz * through.z;
+                        if (depth > -minDepths[tier] || depth < -DoorFrontMaxDepthM) continue;
+                        float lat = dx * across.x + dz * across.z;
+                        float angle = Mathf.Atan2(Mathf.Abs(lat), -depth) * Mathf.Rad2Deg;
+                        if (angle > maxAngles[tier]) continue;
+                        var cell = new NodeKey(floor.Label, ix, iz);
+                        if (need > 0 && floor.Clearance(ix, iz) < need) continue;
+                        if (!SegmentIsClear(cell, far, need)) continue;
+                        keep.Add(cell);
+                        angleOf.Add(angle);
+                        if (angle < bestAngle) bestAngle = angle;
                     }
-                if (goals.Count == 0) return null;
-            }
-            Vector3 across = new Vector3(through.z, 0f, -through.x);
-            for (int pass = 0; pass < 2; pass++)
-            {
-                float lateral = pass == 0 ? DoorFrontLateralM : DoorFrontLateralM * 2f;
-                var keep = new List<NodeKey>();
-                for (int i = 0; i < goals.Count; i++)
-                {
-                    NodeKey g = goals[i];
-                    if (IsVirtual(g) || g.Floor != floor.Label) continue;
-                    Vector2 w = floor.CellToWorld(g.Ix, g.Iz);
-                    float dx = w.x - c.x, dz = w.y - c.z;
-                    float depth = dx * through.x + dz * through.z;      // negative = player's side
-                    float lat = dx * across.x + dz * across.z;
-                    if (depth <= -DoorFrontMinDepthM && Mathf.Abs(lat) <= lateral)
-                        keep.Add(g);
-                }
-                if (keep.Count > 0) return keep;
+                if (keep.Count == 0) continue;
+                // The squarest lines win; A* then picks the nearest of them.
+                var best = new List<NodeKey>();
+                for (int i = 0; i < keep.Count; i++)
+                    if (angleOf[i] <= bestAngle + 8f) best.Add(keep[i]);
+                return best;
             }
             return null;
+        }
+
+        // A walkable cell just beyond the doorway on the far side: the point the player faces and
+        // walks toward to go through.
+        private static bool TryGetDoorwayFarCell(Floor floor, Vector3 c, Vector3 through, out NodeKey far)
+        {
+            far = default;
+            float[] depths = { 1.4f, 1.0f, 0.6f, 0.3f };
+            for (int i = 0; i < depths.Length; i++)
+            {
+                floor.WorldToCell(c.x + through.x * depths[i], c.z + through.z * depths[i], out int ix, out int iz);
+                if (floor.Navigable(ix, iz))
+                {
+                    far = new NodeKey(floor.Label, ix, iz);
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // The point just beyond a doorway (see TryGetDoorwayFarCell), in world space, for the
+        // executor to face when the walk to a door ends.
+        public static bool TryGetDoorwayFarPoint(string doorName, Vector3 nearPos, out Vector3 farPoint)
+        {
+            farPoint = default;
+            if (string.IsNullOrEmpty(doorName) || !EnsureLoaded()) return false;
+            Floor floor = NearestFloorByY(nearPos.y);
+            if (!TryGetDoorwayFrame(floor, doorName, nearPos, out Vector3 c, out Vector3 through))
+                return false;
+            if (TryGetDoorwayFarCell(floor, c, through, out NodeKey far))
+            {
+                Vector2 w = floor.CellToWorld(far.Ix, far.Iz);
+                farPoint = new Vector3(w.x, floor.FloorY, w.y);
+            }
+            else
+            {
+                farPoint = c + through * 1.0f;
+            }
+            return true;
         }
 
         // Goal cells need this many cells (0.2 m each) of clearance for the real 0.8 m capsule to
