@@ -3335,17 +3335,10 @@ namespace DateEverythingAccess
             InteractableObj bestRoomMember = null;
             bool bestRoomOnPlayerFloor = false;
             float bestRoomDistance = float.MaxValue;
-            // Lights and light switches are one datable spread through every room of the house:
-            // left in, the nearest "undiscovered" thing is nearly always a ceiling bulb (standing
-            // in the laundry closet beside Hoove, Ctrl+O picked the closet's light). They are only
-            // considered once nothing else undiscovered is left.
-            for (int pass = 0; pass < 2 && bestRoomMember == null; pass++)
             for (int i = 0; i < interactables.Length; i++)
             {
                 InteractableObj candidate = interactables[i];
                 if (candidate == null || !candidate.gameObject.activeInHierarchy)
-                    continue;
-                if (pass == 0 && IsLightingFixture(candidate))
                     continue;
 
                 string internalName = candidate.InternalName();
@@ -3720,8 +3713,6 @@ namespace DateEverythingAccess
 
             if (haveNudge && nudgeSameFloor && nudgeDistance <= NearbyUndiscoveredM)
             {
-                // Already in (or beside) that room, so naming the room says nothing useful.
-                nudgeLabel = Loc.Get("navigation_nearby_undiscovered");
                 LogObjectivePick("nearby-undiscovered", nudgeTarget, nudgeZone, nudgeLabel);
                 SetTrackedInteractable(nudgeTarget, nudgeZone, nudgeLabel);
                 BeginNavigationAndStartTrackerTone(nudgeZone, nudgeLabel);
@@ -3761,22 +3752,6 @@ namespace DateEverythingAccess
         }
 
         private const float NearbyUndiscoveredM = 8f;
-
-        private static bool IsLightingFixture(InteractableObj io)
-        {
-            if (string.Equals(io.InternalName(), "lux", StringComparison.OrdinalIgnoreCase))
-                return true;
-            for (Transform t = io.transform; t != null; t = t.parent)
-            {
-                string n = t.name ?? string.Empty;
-                if (n.StartsWith("Lights_", StringComparison.OrdinalIgnoreCase) ||
-                    n.Equals("LightSwitches", StringComparison.OrdinalIgnoreCase) ||
-                    n.StartsWith("PV_Lighting", StringComparison.OrdinalIgnoreCase) ||
-                    n.StartsWith("PF_Lighting", StringComparison.OrdinalIgnoreCase))
-                    return true;
-            }
-            return false;
-        }
         private const float NearbySituationalM = 15f;
 
         private static bool IsNearOnPlayerFloor(InteractableObj target, float withinM)
