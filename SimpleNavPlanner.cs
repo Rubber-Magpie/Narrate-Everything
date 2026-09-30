@@ -380,6 +380,17 @@ namespace DateEverythingAccess
                 if (Main.Log != null)
                     Main.Log.LogInfo("SimpleNavPlanner.Plan: door operable goals " + opGoals.Count +
                         ", clear of the swing for the real body " + deepGoals.Count + " (door=" + targetDoor.gameObject.name + ")");
+                // A walk to a door stops on the player's side of it: never plan through the door to
+                // a spot in the room beyond (after a stall blocked the spots in front of the laundry
+                // closet, the re-plan picked ones inside the closet and walked her into the door).
+                List<NodeKey> nearSide = GoalsOnPlayerSide(goalFloor, targetDoor.gameObject.name, startPos, goals);
+                if (nearSide != null && nearSide.Count > 0 && nearSide.Count < goals.Count)
+                {
+                    if (Main.Log != null)
+                        Main.Log.LogInfo("SimpleNavPlanner.Plan: door target kept " + nearSide.Count + "/" + goals.Count +
+                            " goals on the player's side of " + targetDoor.gameObject.name);
+                    goals = nearSide;
+                }
             }
             // Non-door collider target: the game's interaction gate is radius + LINE OF SIGHT, and
             // nothing else — interaction needs the camera ray to HIT the object within
@@ -3575,6 +3586,107 @@ namespace DateEverythingAccess
                 return best;
             }
             return null;
+        }
+
+        // The goals on the same side of a doorway as startPos. Null when the door has no frame.
+        private static List<NodeKey> GoalsOnPlayerSide(Floor floor, string doorName, Vector3 startPos, List<NodeKey> goals)
+        {
+            if (goals == null || goals.Count == 0) return null;
+            if (!TryGetDoorwayFrame(floor, doorName, startPos, out Vector3 c, out Vector3 through))
+                return null;
+            var keep = new List<NodeKey>(goals.Count);
+            for (int i = 0; i < goals.Count; i++)
+            {
+                NodeKey g = goals[i];
+                if (IsVirtual(g) || g.Floor != floor.Label) continue;
+                Vector2 w = floor.CellToWorld(g.Ix, g.Iz);
+                float depth = (w.x - c.x) * through.x + (w.y - c.z) * through.z;
+                if (depth < 0f) keep.Add(g);
+            }
+            return keep;
+        }
+
+        // Where to stand to open a closed door on the way: a spot on the player's side, a little
+        // back from the shut leaf and clear of where it swings, that the player can walk to in a
+        // straight line. The game won't open a door the player is touching (walking to Hoove, she
+        // was pressed against the laundry closet door and it never opened), so she steps back to
+        // here first. Cells are 0.2 m and already allow 0.4 m for the body; the real one is 0.8 m.
+        private const int DoorShutLeafClearCells = 4;   // ~0.3 m gap to the shut door for the real body
+        private const int DoorSwingClearCells = 3;      // ~0.2 m gap to where it swings
+        private const float DoorStandMaxDistM = 4.0f;
+
+        public static bool TryGetDoorOpeningStandpoint(string doorName, Vector3 playerPos, out Vector3 stand)
+        {
+            stand = default;
+            if (string.IsNullOrEmpty(doorName) || !EnsureLoaded()) return false;
+            Floor floor = NearestFloorByY(playerPos.y);
+            if (floor == null || !floor.OperableFromByName.TryGetValue(doorName, out HashSet<long> operable) ||
+                operable.Count == 0)
+                return false;
+            bool haveFrame = TryGetDoorwayFrame(floor, doorName, playerPos, out Vector3 c, out Vector3 through);
+            floor.DoorBlockedByName.TryGetValue(doorName, out HashSet<long> swing);
+            floor.DoorFreedByName.TryGetValue(doorName, out HashSet<long> shut);
+            floor.WorldToCell(playerPos.x, playerPos.z, out int px, out int pz);
+            var fromCell = new NodeKey(floor.Label, px, pz);
+            bool fromOk = floor.Navigable(px, pz);
+
+            // Tiers: with room all round inside the operable area first, then any operable cell.
+            for (int tier = 0; tier < 2; tier++)
+            {
+                float bestD = float.MaxValue;
+                bool found = false;
+                foreach (long packed in operable)
+                {
+                    int ix = (int)(packed >> 32), iz = (int)(uint)packed;
+                    if (!floor.Navigable(ix, iz)) continue;
+                    Vector2 w = floor.CellToWorld(ix, iz);
+                    float d = Vector2.Distance(w, new Vector2(playerPos.x, playerPos.z));
+                    if (d > DoorStandMaxDistM || d >= bestD) continue;
+                    if (haveFrame)
+                    {
+                        float depth = (w.x - c.x) * through.x + (w.y - c.z) * through.z;
+                        if (depth > -0.6f) continue;
+                    }
+                    if (CellNearAny(ix, iz, shut, DoorShutLeafClearCells)) continue;
+                    if (CellNearAny(ix, iz, swing, DoorSwingClearCells)) continue;
+                    if (tier == 0)
+                    {
+                        bool deep = true;
+                        for (int ddx = -OperableMarginCells; ddx <= OperableMarginCells && deep; ddx++)
+                            for (int ddz = -OperableMarginCells; ddz <= OperableMarginCells && deep; ddz++)
+                            {
+                                int nx = ix + ddx, nz = iz + ddz;
+                                if (floor.Navigable(nx, nz) && !operable.Contains(Floor.PackCell(nx, nz)))
+                                    deep = false;
+                            }
+                        if (!deep) continue;
+                    }
+                    if (fromOk && !SegmentIsClear(fromCell, new NodeKey(floor.Label, ix, iz)))
+                        continue;
+                    bestD = d;
+                    stand = new Vector3(w.x, floor.FloorY, w.y);
+                    found = true;
+                }
+                if (found)
+                {
+                    if (Main.Log != null)
+                        Main.Log.LogInfo("SimpleNavPlanner door stand-to-open door=" + doorName +
+                            " at (" + stand.x.ToString("F2") + ", " + stand.z.ToString("F2") + ") dist=" +
+                            bestD.ToString("F2") + " tier=" + tier);
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private static bool CellNearAny(int ix, int iz, HashSet<long> cells, int within)
+        {
+            if (cells == null || cells.Count == 0) return false;
+            for (int ddx = -within; ddx <= within; ddx++)
+                for (int ddz = -within; ddz <= within; ddz++)
+                    if (cells.Contains(Floor.PackCell(ix + ddx, iz + ddz)))
+                        return true;
+            return false;
         }
 
         // A walkable cell just beyond the doorway on the far side: the point the player faces and

@@ -709,6 +709,32 @@ namespace DateEverythingAccess
             }
         }
 
+        // The last door whose Interact left it closed and still (the game refused: the player was
+        // touching it or standing in its swing), and when.
+        private static GameObject _lastRefusedDoor;
+        private static float _lastRefusedTime = -100f;
+
+        /// <summary>
+        /// True when the game has just refused to open this closed door, or the door reports the
+        /// player touching it — either way it will not open until she steps back.
+        /// </summary>
+        public static bool IsDoorRefusingToOpen(DoorPortal door, float withinSeconds)
+        {
+            if (door == null || door.gameObject == null || door.open || IsDoorMoving(door)) return false;
+            if (_lastRefusedDoor == door.gameObject && Time.unscaledTime - _lastRefusedTime <= withinSeconds)
+                return true;
+            if (door.IsSwing && door.SwingDoor != null)
+            {
+                FieldInfo fi = GetDoorCollidedField();
+                if (fi != null)
+                {
+                    try { if (fi.GetValue(door.SwingDoor) is bool b && b) return true; }
+                    catch { }
+                }
+            }
+            return false;
+        }
+
         public static bool TryOpenActiveDoorIfNeeded(Vector3 playerPos)
         {
             return TryOpenDoorIfNeeded(_activeDoor, playerPos);
@@ -815,6 +841,11 @@ namespace DateEverythingAccess
             {
                 door.Interact();
                 _nextDoorInteractTime = Time.unscaledTime + DoorInteractCooldownSeconds;
+                if (!door.open && !IsDoorMoving(door))
+                {
+                    _lastRefusedDoor = door.gameObject;
+                    _lastRefusedTime = Time.unscaledTime;
+                }
                 if (Main.Log != null)
                     Main.Log.LogInfo("SimpleNav fired Interact on door=" + firingDoorName + " dist=" + dist.ToString("0.00") + " openAfter=" + door.open);
                 return true;

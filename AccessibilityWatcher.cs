@@ -1855,7 +1855,15 @@ namespace DateEverythingAccess
             // the player to. She stops at the doorway facing it, and the player chooses: open it,
             // walk through, or use the Dateviators on it (Dorian).
             if (segmentHasDoor && !IsRouteTargetDoorWithFrame(route, SimpleNavBridge.ActiveDoor, playerPos))
+            {
+                if (ApplyDoorStandToOpen(SimpleNavBridge.ActiveDoor, playerTransform, playerPos))
+                    return;
                 SimpleNavBridge.TryOpenActiveDoorIfNeeded(playerPos);
+            }
+            else
+            {
+                _doorStandPhase = DoorStandNone;
+            }
 
             // Steer along the planned polyline with a short pure-pursuit lookahead so the
             // player tracks the corridor through corners instead of cutting toward
@@ -2199,6 +2207,128 @@ namespace DateEverythingAccess
             }
 
             return null;
+        }
+
+        // STAND BACK TO OPEN. The game won't open a door while the player is touching it or
+        // standing where it swings (Door.OpenDoor checks collidedWithPlayer). Walking to Hoove
+        // from right against the laundry closet door, the mod fired Interact again and again and
+        // the door never moved. When the game refuses, step (without turning) to a spot clear of
+        // the swing, open it from there, wait for it, and re-plan the rest of the walk, since the
+        // route was drawn with the door shut and its leaf now lies where it swung.
+        private const int DoorStandNone = 0, DoorStandWalking = 1, DoorStandOpening = 2;
+        private const float DoorRefusalWindowSeconds = 1.5f;
+        private const float DoorStandArriveM = 0.3f;
+        private const float DoorStandWalkTimeoutSeconds = 4f;
+        private const float DoorStandOpenTimeoutSeconds = 3f;
+        private const float DoorStandFallbackBackM = 1.5f;
+        private const int DoorStandMaxAttempts = 2;
+        private int _doorStandPhase;
+        private int _doorStandAttempts;
+        private Vector3 _doorStandPoint;
+        private float _doorStandPhaseStart;
+
+        private void HoldForDoorStand()
+        {
+            ApplyNavigationInput(Vector3.zero, Vector3.zero);
+            _lastAutoWalkMove = Vector3.zero;
+            _lastAutoWalkLook = Vector3.zero;
+            _hasAutoWalkInput = true;
+            _steerMode = SteerNone;
+            ResetAutoWalkProgress();
+        }
+
+        // True while this has taken over the frame's movement.
+        private bool ApplyDoorStandToOpen(DoorPortal door, Transform playerTransform, Vector3 playerPos)
+        {
+            if (door == null || door.gameObject == null)
+            {
+                _doorStandPhase = DoorStandNone;
+                return false;
+            }
+
+            if (_doorStandPhase == DoorStandNone)
+            {
+                if (_doorStandAttempts >= DoorStandMaxAttempts || door.locked || !door.IsSwing ||
+                    !SimpleNavBridge.IsDoorRefusingToOpen(door, DoorRefusalWindowSeconds))
+                    return false;
+                string doorName = door.gameObject.name;
+                if (!SimpleNavPlanner.TryGetDoorOpeningStandpoint(doorName, playerPos, out Vector3 stand))
+                {
+                    Collider doorCol = door.GetComponent();
+                    Vector3 onDoor = doorCol != null ? doorCol.ClosestPointOnBounds(playerPos) : door.gameObject.transform.position;
+                    Vector3 away = playerPos - onDoor;
+                    away.y = 0f;
+                    if (away.sqrMagnitude < 1e-4f)
+                        away = -playerTransform.forward;
+                    away.y = 0f;
+                    stand = playerPos + away.normalized * DoorStandFallbackBackM;
+                }
+                _doorStandAttempts++;
+                _doorStandPoint = stand;
+                _doorStandPhase = DoorStandWalking;
+                _doorStandPhaseStart = Time.unscaledTime;
+                if (Main.Log != null)
+                    Main.Log.LogInfo("SimpleNav door refused to open: door=" + doorName + " player=" +
+                        FormatVector3(playerPos) + " stepping back to " + FormatVector3(stand) +
+                        " attempt=" + _doorStandAttempts);
+            }
+
+            if (door.open || SimpleNavBridge.IsDoorMoving(door))
+            {
+                if (SimpleNavBridge.IsDoorMoving(door))
+                {
+                    HoldForDoorStand();
+                    return true;
+                }
+                _doorStandPhase = DoorStandNone;
+                if (Main.Log != null)
+                    Main.Log.LogInfo("SimpleNav door opened from standing back: door=" + door.gameObject.name + " — re-planning");
+                if (!TryPlanAndInstallSimpleNavRoute())
+                {
+                    StopNavigationRuntime();
+                    return true;
+                }
+                ResetAutoWalkProgress();
+                return true;
+            }
+
+            float elapsed = Time.unscaledTime - _doorStandPhaseStart;
+            if (_doorStandPhase == DoorStandWalking)
+            {
+                Vector3 toStand = _doorStandPoint - playerPos;
+                toStand.y = 0f;
+                if (toStand.magnitude <= DoorStandArriveM || elapsed >= DoorStandWalkTimeoutSeconds)
+                {
+                    _doorStandPhase = DoorStandOpening;
+                    _doorStandPhaseStart = Time.unscaledTime;
+                    HoldForDoorStand();
+                    return true;
+                }
+                // Walk there without turning, so she still faces the door when it opens.
+                Vector3 local = playerTransform.InverseTransformDirection(toStand.normalized);
+                Vector3 standMove = new Vector3(local.x, 0f, local.z);
+                standMove = standMove.sqrMagnitude > 1e-6f ? standMove.normalized : Vector3.zero;
+                ApplyNavigationInput(standMove, Vector3.zero);
+                _lastAutoWalkMove = standMove;
+                _lastAutoWalkLook = Vector3.zero;
+                _hasAutoWalkInput = true;
+                _steerMode = SteerNone;
+                ResetAutoWalkProgress();
+                return true;
+            }
+
+            // DoorStandOpening: stand still and open it.
+            if (elapsed >= DoorStandOpenTimeoutSeconds)
+            {
+                _doorStandPhase = DoorStandNone;
+                if (Main.Log != null)
+                    Main.Log.LogInfo("SimpleNav door still closed after standing back: door=" + door.gameObject.name +
+                        " player=" + FormatVector3(playerPos));
+                return false;
+            }
+            HoldForDoorStand();
+            SimpleNavBridge.TryOpenDoorIfNeeded(door, playerPos);
+            return true;
         }
 
         private const float DoorTargetDoneWithinM = 3.0f;
@@ -5555,6 +5685,8 @@ namespace DateEverythingAccess
             _stallReplans = 0;
             _doorTargetReplanPending = false;
             _progressWaypointSet = false;
+            _doorStandPhase = DoorStandNone;
+            _doorStandAttempts = 0;
             LogCapsuleDimensionsOnce();
             _lastAutoWalkPosition = BetterPlayerControl.Instance != null ? BetterPlayerControl.Instance.transform.position : Vector3.zero;
             _lastAutoWalkProgressTime = Time.unscaledTime;
