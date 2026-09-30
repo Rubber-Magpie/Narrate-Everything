@@ -356,7 +356,28 @@ namespace DateEverythingAccess
                     LastFailure = PlanFailure.DoorMissingOperableCells;
                     return null;
                 }
-                goals = opGoals;
+                // The bake worked out the operable cells for a 0.4 m body; the real one is 0.8 m, so
+                // a cell on the edge of that set has the player's shoulder inside the door's swing
+                // (the game then won't open it — the office closet). Keep cells with a full 0.4 m of
+                // operable (or solid) ground around them when there are any.
+                List<NodeKey> deepGoals = new List<NodeKey>(opGoals.Count);
+                for (int gi = 0; gi < opGoals.Count; gi++)
+                {
+                    NodeKey og = opGoals[gi];
+                    bool deep = true;
+                    for (int ddx = -OperableMarginCells; ddx <= OperableMarginCells && deep; ddx++)
+                        for (int ddz = -OperableMarginCells; ddz <= OperableMarginCells && deep; ddz++)
+                        {
+                            int nx = og.Ix + ddx, nz = og.Iz + ddz;
+                            if (goalFloor.Navigable(nx, nz) && !operable.Contains(Floor.PackCell(nx, nz)))
+                                deep = false;
+                        }
+                    if (deep) deepGoals.Add(og);
+                }
+                goals = deepGoals.Count > 0 ? deepGoals : opGoals;
+                if (Main.Log != null)
+                    Main.Log.LogInfo("SimpleNavPlanner.Plan: door operable goals " + opGoals.Count +
+                        ", clear of the swing for the real body " + deepGoals.Count + " (door=" + targetDoor.gameObject.name + ")");
             }
             // Non-door collider target: the game's interaction gate is radius + LINE OF SIGHT, and
             // nothing else — interaction needs the camera ray to HIT the object within
@@ -3379,6 +3400,7 @@ namespace DateEverythingAccess
         //    through the middle of the doorway into the room beyond is clear. A door that swings
         //    toward the player can lie across the square-on approach once open (the office
         //    closet), so the best line may be a slight angle; the executor then faces along it.
+        private const int OperableMarginCells = 2;
         private const float DoorFrontLateralM = 0.35f;
         private const float DoorFrontMinDepthM = 1.2f;
         private const float DoorFrontMaxDepthM = 3.0f;

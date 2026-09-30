@@ -137,6 +137,12 @@ namespace DateEverythingAccess
             if (!TryFindDatableByInternalName(internalName, out InteractableObj found) || found == null)
                 return false;
 
+            // Start from the found datable itself. The zone lookup below only replaces the tracked
+            // object when it has to substitute a stand-in; otherwise whatever was tracked BEFORE
+            // (the office closet door the player had just walked to) leaked through as the
+            // "context" target, and Ctrl+O in the crawlspace headed for that door, not the Key.
+            _trackedInteractable = found;
+
             if (!TryGetTrackedInteractableZone(found, out targetZone))
                 return false;
 
