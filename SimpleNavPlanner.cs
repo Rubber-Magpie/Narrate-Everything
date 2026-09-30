@@ -3383,8 +3383,21 @@ namespace DateEverythingAccess
         private const float DoorFrontMinDepthM = 1.2f;
         private const float DoorFrontMaxDepthM = 3.0f;
 
+        // Doors whose doorway is too tight for a planned "stand in front" spot: the office closet
+        // is narrow and its open door partly covers the approach, and every spot the grid offered
+        // in front turned out to be physically out of reach. For these the player stays where she
+        // opened the door and just turns to face into the doorway.
+        private static readonly HashSet<string> _noFrontStandDoors =
+            new HashSet<string>(StringComparer.Ordinal) { "Doors_Office_Closet" };
+
+        public static bool HasFrontStandpoint(string doorName)
+        {
+            return !string.IsNullOrEmpty(doorName) && !_noFrontStandDoors.Contains(doorName);
+        }
+
         private static List<NodeKey> FrontOfDoorwayGoals(Floor floor, string doorName, Vector3 startPos, List<NodeKey> goals)
         {
+            if (!HasFrontStandpoint(doorName)) return null;
             if (goals != null && goals.Count == 0) return null;
             if (!TryGetDoorwayFrame(floor, doorName, startPos, out Vector3 c, out Vector3 through))
                 return null;

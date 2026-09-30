@@ -1712,7 +1712,7 @@ namespace DateEverythingAccess
                 if (_doorTargetReplanPending)
                 {
                     _doorTargetReplanPending = false;
-                    if (swingDoor.open)
+                    if (swingDoor.open && SimpleNavPlanner.HasFrontStandpoint(swingDoor.gameObject.name))
                     {
                         if (Main.Log != null)
                             Main.Log.LogInfo("SimpleNav door target open: re-planning to the front of " + swingDoor.gameObject.name);
