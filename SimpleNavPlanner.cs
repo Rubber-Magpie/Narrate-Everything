@@ -49,6 +49,8 @@ namespace DateEverythingAccess
         // [[project-navigation-clearance-cost-rejected-2026-05-29]] (reconciled: bounded, not flat).
         private const int ClearanceTargetCells = 4;
         private const float ClearancePenaltyPerCellM = 0.15f;
+        // Extra metres per step onto a cell with this many cells of clearance (index = clearance).
+        private static readonly float[] ClearancePenaltyByCells = { 0f, 1.0f, 0.35f, 0.1f };
         // Player-capsule + safety margin from the target's collider face. Goal cells whose
         // player-capsule center is closer than this become invalid (overlap), and cells further
         // than ColliderBandOuterM become invalid (too far to interact reliably). The result is
@@ -2142,8 +2144,12 @@ namespace DateEverythingAccess
                         // than ClearanceTargetCells to a wall cost extra metres, so A*
                         // prefers the wide lane. Penalty only raises g (heuristic stays
                         // admissible). Mirrors plan_object_route.py Planner.neighbors.
-                        int deficit = ClearanceTargetCells - f.Clearance(nx, nz);
-                        float penalty = deficit > 0 ? deficit * ClearancePenaltyPerCellM : 0f;
+                        // Weighted toward the real 0.8 m body: the grid only allows for 0.4 m, so a
+                        // cell 1 away from a blocked one has her shoulder in the table / door frame
+                        // (the kitchen-table and doorway stalls). Those cost a lot; 2 away (just
+                        // clear) a little; 3 away barely anything.
+                        int clr = f.Clearance(nx, nz);
+                        float penalty = clr < ClearancePenaltyByCells.Length ? ClearancePenaltyByCells[clr] : 0f;
                         yield return (new NodeKey(f.Label, nx, nz), step * f.CellSize + penalty);
                     }
                 }

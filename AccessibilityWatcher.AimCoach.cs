@@ -229,8 +229,13 @@ namespace DateEverythingAccess
             if (Mathf.Abs(pitchErr) > tol)
                 v = Graded(pitchErr > 0f ? Loc.Get("aim_up") : Loc.Get("aim_down"), Mathf.Abs(pitchErr));
 
+            // Within the target's own size on both axes but the game hasn't picked it yet: the
+            // crosshair is on its edge. Nudge toward the aim point by the larger remaining error
+            // ("a little up"), which is something the player can act on.
             if (h == null && v == null)
-                return Loc.Get("aim_almost");
+                return Mathf.Abs(yawErr) >= Mathf.Abs(pitchErr)
+                    ? Loc.Get("aim_little", yawErr > 0f ? Loc.Get("aim_right") : Loc.Get("aim_left"))
+                    : Loc.Get("aim_little", pitchErr > 0f ? Loc.Get("aim_up") : Loc.Get("aim_down"));
             if (h != null && v != null)
                 return Loc.Get("aim_and", Mathf.Abs(yawErr) >= Mathf.Abs(pitchErr) ? h : v,
                     Mathf.Abs(yawErr) >= Mathf.Abs(pitchErr) ? v : h);

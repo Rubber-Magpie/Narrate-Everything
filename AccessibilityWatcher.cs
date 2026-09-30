@@ -1948,10 +1948,11 @@ namespace DateEverythingAccess
             // along something the bake doesn't know about (the open crawlspace trapdoor) covered
             // plenty of ground without gaining any, so the stall recovery never kicked in.
             float toWaypointDist = GetFlatDistance(playerPos, target);
-            bool newWaypoint = (target - _progressWaypoint).sqrMagnitude > 0.01f;
+            bool newWaypoint = !_progressWaypointSet || (target - _progressWaypoint).sqrMagnitude > 0.01f;
             if (newWaypoint)
             {
                 _progressWaypoint = target;
+                _progressWaypointSet = true;
                 _progressBestDist = toWaypointDist;
             }
             if (newWaypoint || toWaypointDist <= _progressBestDist - AutoWalkProgressDistance)
@@ -2199,7 +2200,8 @@ namespace DateEverythingAccess
         private const float DoorTargetDoneWithinM = 3.0f;
         private const float DoorFaceToleranceDeg = 2f;
         private bool _doorTargetReplanPending;
-        private Vector3 _progressWaypoint = new Vector3(float.NaN, 0f, 0f);
+        private Vector3 _progressWaypoint;
+        private bool _progressWaypointSet;
         private float _progressBestDist = float.MaxValue;
 
         private static bool IsRouteTargetDoorWithFrame(SimpleNavRoute route, DoorPortal door, Vector3 playerPos)
@@ -5470,6 +5472,7 @@ namespace DateEverythingAccess
             _isAutoWalking = true;
             _stallReplans = 0;
             _doorTargetReplanPending = false;
+            _progressWaypointSet = false;
             LogCapsuleDimensionsOnce();
             _lastAutoWalkPosition = BetterPlayerControl.Instance != null ? BetterPlayerControl.Instance.transform.position : Vector3.zero;
             _lastAutoWalkProgressTime = Time.unscaledTime;
