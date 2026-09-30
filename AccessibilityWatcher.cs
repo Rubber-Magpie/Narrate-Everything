@@ -1693,6 +1693,40 @@ namespace DateEverythingAccess
                 return;
             }
 
+            // DOOR TARGET SWINGING: once the target door has been opened, stand still until it has
+            // finished moving — a door that swings toward the player (the office closet) otherwise
+            // swings straight into her — then re-plan, so the route to the spot squarely in front
+            // of the doorway is worked out with the door open and its leaf out of the way.
+            if (TryGetRouteDoorFrame(route, playerPos, out DoorPortal swingDoor, out _, out _))
+            {
+                if (SimpleNavBridge.IsDoorMoving(swingDoor))
+                {
+                    _doorTargetReplanPending = true;
+                    ApplyNavigationInput(Vector3.zero, Vector3.zero);
+                    _lastAutoWalkMove = Vector3.zero;
+                    _lastAutoWalkLook = Vector3.zero;
+                    _steerMode = SteerNone;
+                    ResetAutoWalkProgress();   // waiting on the door is not a stall
+                    return;
+                }
+                if (_doorTargetReplanPending)
+                {
+                    _doorTargetReplanPending = false;
+                    if (swingDoor.open)
+                    {
+                        if (Main.Log != null)
+                            Main.Log.LogInfo("SimpleNav door target open: re-planning to the front of " + swingDoor.gameObject.name);
+                        if (!TryPlanAndInstallSimpleNavRoute())
+                        {
+                            StopNavigationRuntime();
+                            return;
+                        }
+                        ResetAutoWalkProgress();
+                        return;
+                    }
+                }
+            }
+
             // Arrival: within target interaction radius (XZ). The planner already routes to a
             // goal cell inside this disc, so this matches the goal-cell expansion in O4.
             if (SimpleNavBridge.HasArrivedAtRouteTarget(playerPos))
@@ -2141,6 +2175,7 @@ namespace DateEverythingAccess
 
         private const float DoorTargetDoneWithinM = 3.0f;
         private const float DoorFaceToleranceDeg = 2f;
+        private bool _doorTargetReplanPending;
         private const float DoorFaceTimeoutSeconds = 3f;
 
         // The route's target door (hinged or sliding) and its doorway frame from the bake, when
@@ -5400,6 +5435,7 @@ namespace DateEverythingAccess
 
             _isAutoWalking = true;
             _stallReplans = 0;
+            _doorTargetReplanPending = false;
             LogCapsuleDimensionsOnce();
             _lastAutoWalkPosition = BetterPlayerControl.Instance != null ? BetterPlayerControl.Instance.transform.position : Vector3.zero;
             _lastAutoWalkProgressTime = Time.unscaledTime;

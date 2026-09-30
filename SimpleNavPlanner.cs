@@ -536,7 +536,14 @@ namespace DateEverythingAccess
             // straight forward afterwards goes through it. Falls back to the normal goals below.
             string frontDoorName = targetDoor != null && targetDoor.gameObject != null
                 ? targetDoor.gameObject.name : targetName;
-            List<NodeKey> doorFrontGoals = FrontOfDoorwayGoals(goalFloor, frontDoorName, startPos, goals);
+            // With the door already OPEN, any walkable cell squarely in front will do (the leaf has
+            // swung aside and its cells are blocked). While it is CLOSED the player must also be able
+            // to open it from there, so only the operable cells count; for a door that swings
+            // toward the player those all sit in the swing, and the normal goals are used instead
+            // (the executor then waits for the swing and re-plans once it is open).
+            bool frontDoorOpen = targetDoor != null && targetDoor.open;
+            List<NodeKey> doorFrontGoals = FrontOfDoorwayGoals(goalFloor, frontDoorName, startPos,
+                frontDoorOpen ? null : goals);
             if (doorFrontGoals != null)
             {
                 for (int need = BodyGoalClearanceCells; need >= 0 && !roomyPlanned; need--)
@@ -3369,11 +3376,31 @@ namespace DateEverythingAccess
         private const float DoorFrontLateralM = 0.35f;
         private const float DoorFrontMinDepthM = 0.7f;
 
+        private const float DoorFrontMaxDepthM = 3.0f;
+
+        // `goals` null = consider every walkable cell in front (door already open).
         private static List<NodeKey> FrontOfDoorwayGoals(Floor floor, string doorName, Vector3 startPos, List<NodeKey> goals)
         {
-            if (goals == null || goals.Count == 0) return null;
+            if (goals != null && goals.Count == 0) return null;
             if (!TryGetDoorwayFrame(floor, doorName, startPos, out Vector3 c, out Vector3 through))
                 return null;
+            if (goals == null)
+            {
+                goals = new List<NodeKey>();
+                float r = DoorFrontMaxDepthM + DoorFrontLateralM * 2f;
+                floor.WorldToCell(c.x - r, c.z - r, out int x0, out int z0);
+                floor.WorldToCell(c.x + r, c.z + r, out int x1, out int z1);
+                for (int ix = x0; ix <= x1; ix++)
+                    for (int iz = z0; iz <= z1; iz++)
+                    {
+                        if (!floor.Navigable(ix, iz)) continue;
+                        Vector2 w = floor.CellToWorld(ix, iz);
+                        float depth = (w.x - c.x) * through.x + (w.y - c.z) * through.z;
+                        if (depth < -DoorFrontMaxDepthM) continue;
+                        goals.Add(new NodeKey(floor.Label, ix, iz));
+                    }
+                if (goals.Count == 0) return null;
+            }
             Vector3 across = new Vector3(through.z, 0f, -through.x);
             for (int pass = 0; pass < 2; pass++)
             {
