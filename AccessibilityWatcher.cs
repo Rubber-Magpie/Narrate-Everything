@@ -3690,11 +3690,27 @@ namespace DateEverythingAccess
                 return;
             }
 
-            // Something undiscovered right where the player is beats a situational datable across
-            // the house (standing in the laundry closet with Hoove unmet, Ctrl+O went upstairs to
-            // the air vent). Announced as the room, like the "find more datables" nudge below.
+            // Order after a specific objective:
+            //   1. a situational datable (Dolly after the couch moves, Zoey, Airyn, the Key) that is
+            //      close by on this floor: the player has just made it appear or is standing by it;
+            //   2. something undiscovered right here (standing in the laundry closet with Hoove
+            //      unmet, Ctrl+O went upstairs to the air vent);
+            //   3. a situational datable anywhere;
+            //   4. the "find more datables" nudge / nearest room with something undiscovered.
+            bool haveContext = TryResolveContextDefaultTarget(out InteractableObj contextInteractable,
+                out string contextZone, out string contextLabel);
+            bool contextNear = haveContext && IsNearOnPlayerFloor(contextInteractable, NearbySituationalM);
             bool haveNudge = TryResolveUnexploredNudge(out InteractableObj nudgeTarget, out string nudgeZone,
                 out string nudgeLabel, out float nudgeDistance, out bool nudgeSameFloor);
+
+            if (contextNear)
+            {
+                LogObjectivePick("context", contextInteractable, contextZone, contextLabel);
+                SetTrackedInteractable(contextInteractable, contextZone, contextLabel);
+                BeginNavigationAndStartTrackerTone(contextZone, contextLabel);
+                return;
+            }
+
             if (haveNudge && nudgeSameFloor && nudgeDistance <= NearbyUndiscoveredM)
             {
                 LogObjectivePick("nearby-undiscovered", nudgeTarget, nudgeZone, nudgeLabel);
@@ -3703,9 +3719,7 @@ namespace DateEverythingAccess
                 return;
             }
 
-            // No specific objective — a context default takes priority over the generic
-            // "find more datables" objective.
-            if (TryResolveContextDefaultTarget(out InteractableObj contextInteractable, out string contextZone, out string contextLabel))
+            if (haveContext)
             {
                 LogObjectivePick("context", contextInteractable, contextZone, contextLabel);
                 SetTrackedInteractable(contextInteractable, contextZone, contextLabel);
@@ -3738,6 +3752,18 @@ namespace DateEverythingAccess
         }
 
         private const float NearbyUndiscoveredM = 8f;
+        private const float NearbySituationalM = 15f;
+
+        private static bool IsNearOnPlayerFloor(InteractableObj target, float withinM)
+        {
+            if (target == null || BetterPlayerControl.Instance == null) return false;
+            Vector3 playerPos = BetterPlayerControl.Instance.transform.position;
+            Vector3 at = PartCentre(target);
+            bool sameFloor = !SimpleNavPlanner.TryGetPlayerFloorLabel(playerPos.y, out string pf) ||
+                !SimpleNavPlanner.TryGetTargetFloorLabel(at.y, out string tf) ||
+                string.Equals(pf, tf, StringComparison.OrdinalIgnoreCase);
+            return sameFloor && GetFlatDistance(playerPos, at) <= withinM;
+        }
 
         // The nearest room holding an undiscovered datable, as a navigation target: the member to
         // route to, its zone, the room name to announce, and how far away it is.
