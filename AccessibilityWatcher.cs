@@ -1738,9 +1738,7 @@ namespace DateEverythingAccess
                         Main.Log.LogInfo("SimpleNav door arrival: door=" + frameDoor.gameObject.name +
                             " facing through yawErr=" + yawErr.ToString("F1") + " open=" + frameDoor.open +
                             " locked=" + frameDoor.locked + " player=" + FormatVector3(playerPos));
-                    StopNavigationWithAnnouncement(frameDoor.open
-                        ? "navigation_arrived_door_open_ahead"
-                        : frameDoor.locked ? "navigation_arrived_door_locked_ahead" : "navigation_arrived_door_ahead");
+                    StopNavigationWithAnnouncement("navigation_arrived");
                     return;
                 }
 
