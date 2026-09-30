@@ -256,6 +256,8 @@ namespace DateEverythingAccess
             Add("navigation_rerouting", "Blocked. Finding another way.");
             Add("room_downstairs_hall", "Downstairs hall");
             Add("room_upstairs_hall", "Upstairs hall");
+            Add("room_laundry_closet", "Laundry closet");
+            Add("room_laundry_room", "Laundry room");
             Add("navigation_object_picker_cabinets_group", "{0} cabinets");
             Add("aim_coach_start", "{0} is within reach. Aim at it:");
             Add("aim_coach_start_after_walk", "Arrived near {0}, but not aimed at it. Aim at it:");
@@ -484,6 +486,8 @@ namespace DateEverythingAccess
             AddJa("navigation_rerouting", "進めません。別の経路を探しています。");
             AddJa("room_downstairs_hall", "1階の廊下");
             AddJa("room_upstairs_hall", "2階の廊下");
+            AddJa("room_laundry_closet", "洗濯室のクローゼット");
+            AddJa("room_laundry_room", "洗濯室");
             AddJa("navigation_object_picker_cabinets_group", "{0}の戸棚");
             AddJa("aim_coach_start", "{0}に手が届きます。狙いを合わせてください:");
             AddJa("aim_coach_start_after_walk", "{0}の近くに着きましたが、狙いが合っていません。狙いを合わせてください:");

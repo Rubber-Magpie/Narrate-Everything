@@ -4770,10 +4770,17 @@ namespace DateEverythingAccess
             int depth = 0;
             Transform houseChild = null;
             Transform house = null;
+            Transform below = null;
             while (current != null && depth < 16)
             {
                 if (_hierarchyRoomNames.TryGetValue(BuildComparisonKey(current.name), out string named))
                 {
+                    // The laundry room's closet (Hoove, a bobby pin) is its own space, and the room
+                    // announcement says "Laundry closet" there, so the lists do too.
+                    if (below != null &&
+                        string.Equals(current.name, "LaundryRoom", StringComparison.OrdinalIgnoreCase) &&
+                        string.Equals(below.name, "Closet", StringComparison.OrdinalIgnoreCase))
+                        named = Loc.Get("room_laundry_closet");
                     roomName = named;
                     return true;
                 }
@@ -4782,6 +4789,7 @@ namespace DateEverythingAccess
                     house = current;
                 else if (house == null)
                     houseChild = current;
+                below = current;
                 current = current.parent;
                 depth++;
             }
@@ -4863,6 +4871,7 @@ namespace DateEverythingAccess
             var t = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             foreach (string r in new[] { "Kitchen", "Office", "LivingRoom", "LaundryRoom", "Bathroom1", "DiningRoom", "Hallway", "PianoRoom" })
                 t[RoomSpokenName(r)] = "ground";
+            t[Loc.Get("room_laundry_closet")] = "ground";
             foreach (string r in new[] { "Gym", "Bedroom", "Bathroom2", "Attic", "UpstairsHall" })
                 t[RoomSpokenName(r)] = "upper";
             return t;
@@ -10590,6 +10599,13 @@ namespace DateEverythingAccess
             if (zone == null)
                 return null;
 
+            // The game's camera zones for the laundry room are misnamed: the one called
+            // "laundry_room_closet" covers the main room by the closet door, and the closet itself
+            // (where Hoove is) is "laundry_room6". Say what the player is actually standing in.
+            if (string.Equals(zone.Name, "laundry_room6", StringComparison.OrdinalIgnoreCase))
+                return Loc.Get("room_laundry_closet");
+            if (string.Equals(zone.Name, "laundry_room_closet", StringComparison.OrdinalIgnoreCase))
+                return Loc.Get("room_laundry_room");
             return NormalizeIdentifierName(zone.Name);
         }
 
