@@ -478,6 +478,78 @@ namespace DateEverythingAccess
                     Main.Log.LogInfo("SimpleNavPlanner.Plan: strict game-ray LOS kept " + losClear.Count +
                         " standpoint(s) for target=" + (targetName ?? "<null>") + "#" + targetGameObjectId);
 
+                // NOTHING SEEN FROM 1.6 m. The sightline test looks from a 1.6 m eye, but the real
+                // camera sits far higher (the player is scaled 2x). The rose-stem inanimal on the
+                // laundry room windowsill is hidden behind the window from 1.6 m. Try again from the
+                // real camera height; if even that finds nothing, walk to the nearest spots beside it
+                // anyway, and the aim help takes over on arrival, rather than refusing to go at all.
+                if (losClear.Count == 0)
+                {
+                    float liveEye = LiveEyeHeightM();
+                    InteractableObj retryIo = ResolveTargetInteractable(targetGameObjectId);
+                    if (liveEye > InteractionEyeHeightM + 0.5f)
+                    {
+                        _losEyeHeightOverride = liveEye;
+                        _strictLosCollider = targetCollider;
+                        _strictLosTarget = retryIo;
+                        try
+                        {
+                            for (int i = 0; i < goals.Count; i++)
+                            {
+                                NodeKey g = goals[i];
+                                Vector2 rxz = goalFloor.CellToWorld(g.Ix, g.Iz);
+                                Vector3 rCell = new Vector3(rxz.x, goalFloor.FloorY + 1.0f, rxz.y);
+                                Vector3 rNear = targetCollider.ClosestPointOnBounds(rCell);
+                                float rdx = rNear.x - rCell.x, rdz = rNear.z - rCell.z;
+                                if (rdx * rdx + rdz * rdz < innerSq) continue;
+                                HashSet<string> rPassed = new HashSet<string>(StringComparer.Ordinal);
+                                float rMargin = CellLineOfSightClearanceM(goalFloor, g, targetCollider, radius, rPassed);
+                                if (rMargin < 0f) continue;
+                                losClear.Add(g);
+                                passedOf.Add(rPassed);
+                                clearanceOf.Add(rMargin);
+                                if (rMargin > bestClearance) bestClearance = rMargin;
+                                goalQuality[g] = rMargin;
+                            }
+                        }
+                        finally
+                        {
+                            _losEyeHeightOverride = 0f;
+                            _strictLosCollider = null;
+                            _strictLosTarget = null;
+                        }
+                        if (Main.Log != null)
+                            Main.Log.LogInfo("SimpleNavPlanner.Plan: sightline retry from the real camera height (" +
+                                liveEye.ToString("F2") + " m) kept " + losClear.Count + " standpoint(s) for target=" +
+                                (targetName ?? "<null>"));
+                    }
+                    if (losClear.Count == 0)
+                    {
+                        for (int pass = 0; pass < 2 && losClear.Count == 0; pass++)
+                        {
+                            for (int i = 0; i < goals.Count; i++)
+                            {
+                                NodeKey g = goals[i];
+                                Vector2 axz = goalFloor.CellToWorld(g.Ix, g.Iz);
+                                Vector3 aCell = new Vector3(axz.x, goalFloor.FloorY + 1.0f, axz.y);
+                                Vector3 aNear = targetCollider.ClosestPointOnBounds(aCell);
+                                float adx = aNear.x - aCell.x, adz = aNear.z - aCell.z;
+                                float ad2 = adx * adx + adz * adz;
+                                if (ad2 < innerSq) continue;
+                                if (pass == 0 && ad2 > ApproachOnlyWithinM * ApproachOnlyWithinM) continue;
+                                losClear.Add(g);
+                                passedOf.Add(new HashSet<string>(StringComparer.Ordinal));
+                                clearanceOf.Add(0f);
+                                goalQuality[g] = 0f;
+                            }
+                        }
+                        if (losClear.Count > 0 && Main.Log != null)
+                            Main.Log.LogWarning("SimpleNavPlanner.Plan: no sightline to target=" + (targetName ?? "<null>") +
+                                " from anywhere; walking to the nearest of " + losClear.Count +
+                                " spots beside it instead (the aim help takes over there)");
+                    }
+                }
+
                 // FRONT-APPROACH: if this object faces one way and has LOS-clear cells on BOTH its
                 // front and back, keep only the front cells — a standpoint behind a monitor/TV/painting
                 // passes the offline ray (it hits the box's back face) but the game won't let the player
@@ -2471,6 +2543,12 @@ namespace DateEverythingAccess
         // interaction ray originates at the player camera; ~1.6m is a standing eye height and
         // matches where the camera sits on the player capsule.
         private const float InteractionEyeHeightM = 1.6f;
+        // When set (> 0), the sightline test looks from this height instead (the retry from the real
+        // camera height for things hidden from 1.6 m).
+        [ThreadStatic] private static float _losEyeHeightOverride;
+        private static float SightlineEyeHeightM => _losEyeHeightOverride > 0f ? _losEyeHeightOverride : InteractionEyeHeightM;
+        // With no sightline from anywhere, walk to spots within this distance of the target.
+        private const float ApproachOnlyWithinM = 3.0f;
         private const float LookPitchMarginDeg = 8f;
         private static System.Reflection.FieldInfo _maxRotField;
         private static bool _maxRotFieldLooked;
@@ -2640,7 +2718,7 @@ namespace DateEverythingAccess
             try
             {
                 Vector2 xz = floor.CellToWorld(g.Ix, g.Iz);
-                Vector3 eye = new Vector3(xz.x, floor.FloorY + InteractionEyeHeightM, xz.y);
+                Vector3 eye = new Vector3(xz.x, floor.FloorY + SightlineEyeHeightM, xz.y);
                 BetterPlayerControl bpc = BetterPlayerControl.Instance;
                 int mask = bpc != null ? ~(int)bpc.dateviatorIgnores : ~0;
                 // See the CAMERA-POSE MODEL note in TryAimFromCell: the game casts from the camera
