@@ -5451,6 +5451,7 @@ namespace DateEverythingAccess
             // Already standing by it: no walk needed, just talk the player's aim onto it.
             if (!_hasNavigationWorldTarget &&
                 TryGetTrackedInteractable(out InteractableObj nearTarget) && nearTarget != null &&
+                (nearTarget = AdoptSelectablePart(nearTarget)) != null &&
                 IsTargetAimableFromHere(nearTarget, AimCoachStartWithinM, out _))
             {
                 StartAimCoach(nearTarget, afterWalk: false);
@@ -5541,6 +5542,7 @@ namespace DateEverythingAccess
                 ScreenReader.Say(Loc.Get("navigation_no_objective"));
                 return false;
             }
+            target = AdoptSelectablePart(target);
             if (BetterPlayerControl.Instance == null)
             {
                 if (Main.Log != null) Main.Log.LogDebug("ToggleAutoWalk: no BetterPlayerControl for route planning");
@@ -5593,6 +5595,52 @@ namespace DateEverythingAccess
         // Ordered TALLEST-FIRST: a part's height above its supporting furniture is what lets the
         // sightline clear the counter/desk edge that occluded the original pick. See the call site.
         private const float SiblingPartMaxDistM = 4.5f;
+
+        // Some datables are split into a visible mesh with NO collider and a separate, invisible
+        // collider part that the game actually selects (the armchair blanket: SM_Blanket_0521 has
+        // no collider and a broken position; BlanketCollider_1 is what the crosshair lands on).
+        // Routing and aiming at the mesh can never succeed. Swap to the nearest same-datable part
+        // that has a collider, and make it the tracked target.
+        private InteractableObj AdoptSelectablePart(InteractableObj target)
+        {
+            if (target == null || target.gameObject == null || HasEnabledCollider(target))
+                return target;
+            string ink = target.inkFileName;
+            string internalName = target.InternalName();
+            Vector3 centre = PartCentre(target);
+            InteractableObj best = null;
+            float bestSq = SiblingPartMaxDistM * SiblingPartMaxDistM * 2f;
+            InteractableObj[] all = FindObjectsOfType<InteractableObj>();
+            for (int i = 0; i < all.Length; i++)
+            {
+                InteractableObj c = all[i];
+                if (c == null || c == target || c.gameObject == null || !c.gameObject.activeInHierarchy) continue;
+                bool sameDatable = !string.IsNullOrEmpty(ink)
+                    ? string.Equals(c.inkFileName, ink, StringComparison.OrdinalIgnoreCase)
+                    : !string.IsNullOrEmpty(internalName) &&
+                      string.Equals(c.InternalName(), internalName, StringComparison.OrdinalIgnoreCase);
+                if (!sameDatable || !HasEnabledCollider(c)) continue;
+                float d = (PartCentre(c) - centre).sqrMagnitude;
+                if (d < bestSq) { bestSq = d; best = c; }
+            }
+            if (best == null)
+                return target;
+            if (Main.Log != null)
+                Main.Log.LogInfo("Target '" + target.gameObject.name + "' has no collider; using its selectable part '" +
+                    best.gameObject.name + "'");
+            _trackedInteractable = best;
+            _trackedInteractableId = best.Id;
+            ResetTrackedInteractableApproachTarget();
+            return best;
+        }
+
+        private static bool HasEnabledCollider(InteractableObj io)
+        {
+            Collider[] cols = io.GetComponentsInChildren<Collider>();
+            for (int i = 0; i < cols.Length; i++)
+                if (cols[i] != null && cols[i].enabled) return true;
+            return false;
+        }
 
         private static Vector3 PartCentre(InteractableObj obj)
         {
