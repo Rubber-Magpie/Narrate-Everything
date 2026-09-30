@@ -531,6 +531,41 @@ namespace DateEverythingAccess
             // pressing into it at the end of the walk (the kitchen-cupboard stall). Prefer goal cells
             // with room for the real body; fall back to tighter tiers, then to the full set.
             bool roomyPlanned = false;
+
+            // DOOR TARGET: finish squarely in front of the doorway, on the player's side, so walking
+            // straight forward afterwards goes through it. Falls back to the normal goals below.
+            string frontDoorName = targetDoor != null && targetDoor.gameObject != null
+                ? targetDoor.gameObject.name : targetName;
+            List<NodeKey> frontGoals = FrontOfDoorwayGoals(goalFloor, frontDoorName, startPos, goals);
+            if (frontGoals != null)
+            {
+                for (int need = BodyGoalClearanceCells; need >= 0 && !roomyPlanned; need--)
+                {
+                    List<NodeKey> set = need > 0 ? GoalsWithClearance(frontGoals, need) : frontGoals;
+                    if (need > 0 && set == null)
+                    {
+                        // GoalsWithClearance returns null for "all qualify" too; check which.
+                        bool all = true;
+                        for (int i = 0; i < frontGoals.Count && all; i++)
+                        {
+                            NodeKey g = frontGoals[i];
+                            Floor gf = FloorByLabel(g.Floor);
+                            if (gf == null || gf.Clearance(g.Ix, g.Iz) < need) all = false;
+                        }
+                        if (!all) continue;
+                        set = frontGoals;
+                    }
+                    if (AStar(startNode, set, goalFloor.Label, targetPos.x, targetPos.z, out path, out totalCost, goalQuality))
+                    {
+                        roomyPlanned = true;
+                        if (Main.Log != null)
+                            Main.Log.LogInfo("SimpleNavPlanner.Plan: door-front goals kept " + set.Count + "/" + goals.Count +
+                                " (clearance>=" + need + ") for door=" + frontDoorName);
+                        goals = set;
+                    }
+                }
+            }
+
             for (int need = BodyGoalClearanceCells; need >= 2 && !roomyPlanned; need--)
             {
                 List<NodeKey> roomy = GoalsWithClearance(goals, need);
@@ -3249,6 +3284,117 @@ namespace DateEverythingAccess
         // Take the door's freed cells that are walkable now, keep the largest connected piece,
         // and average the cells farthest from anything blocked (capped at 0.8 m, so a wide gap
         // averages to its middle line). Sliding doors keep the baked point.
+        // DOORWAY FRAME. For a passage door: the middle of its gap and the direction straight
+        // through it, pointing away from `nearPos` (the side the player is on). The through
+        // direction comes from the door's closed-leaf footprint (its freed cells): the leaf is wide
+        // and thin, so its long axis is the doorway's width and the through direction is square to
+        // it. The house is axis-aligned, so the result snaps to the nearest world axis.
+        public static bool TryGetDoorwayFrame(string doorName, Vector3 nearPos, out Vector3 centre, out Vector3 through)
+        {
+            centre = default; through = default;
+            if (string.IsNullOrEmpty(doorName) || !EnsureLoaded()) return false;
+            return TryGetDoorwayFrame(NearestFloorByY(nearPos.y), doorName, nearPos, out centre, out through);
+        }
+
+        private static bool TryGetDoorwayFrame(Floor floor, string doorName, Vector3 nearPos, out Vector3 centre, out Vector3 through)
+        {
+            centre = default; through = default;
+            if (floor == null || string.IsNullOrEmpty(doorName) || _containerDoorNames.Contains(doorName))
+                return false;
+            // Room and closet doors only: cupboards, cabinets, the fridge and the shower door are
+            // things you open in place, not doorways you walk through.
+            string lower = doorName.ToLowerInvariant();
+            if (lower.Contains("cupboard") || lower.Contains("cabinet") || lower.Contains("fridge") ||
+                lower.Contains("shower") || lower.Contains("breaker") || lower.Contains("kithcen"))
+                return false;
+            if (!floor.DoorFreedByName.TryGetValue(doorName, out HashSet<long> freed) || freed.Count < 6)
+                return false;
+
+            // Largest 4-connected piece of the footprint (a few doors carry a stray wedge).
+            var seen = new HashSet<long>();
+            List<long> main = null;
+            foreach (long start in freed)
+            {
+                if (seen.Contains(start)) continue;
+                var comp = new List<long>();
+                var stack = new Stack<long>();
+                stack.Push(start); seen.Add(start);
+                while (stack.Count > 0)
+                {
+                    long c = stack.Pop(); comp.Add(c);
+                    int cx = (int)(c >> 32), cz = (int)(uint)c;
+                    long[] ns = { Floor.PackCell(cx + 1, cz), Floor.PackCell(cx - 1, cz), Floor.PackCell(cx, cz + 1), Floor.PackCell(cx, cz - 1) };
+                    for (int k = 0; k < ns.Length; k++)
+                        if (freed.Contains(ns[k]) && seen.Add(ns[k])) stack.Push(ns[k]);
+                }
+                if (main == null || comp.Count > main.Count) main = comp;
+            }
+            if (main == null || main.Count < 6) return false;
+
+            double mx = 0, mz = 0;
+            foreach (long c in main) { mx += (int)(c >> 32); mz += (int)(uint)c; }
+            mx /= main.Count; mz /= main.Count;
+            double sxx = 0, szz = 0, sxz = 0;
+            foreach (long c in main)
+            {
+                double dx = (int)(c >> 32) - mx, dz = (int)(uint)c - mz;
+                sxx += dx * dx; szz += dz * dz; sxz += dx * dz;
+            }
+            double widthAngle = 0.5 * Math.Atan2(2 * sxz, sxx - szz);
+            bool widthAlongX = Math.Abs(Math.Cos(widthAngle)) >= Math.Abs(Math.Sin(widthAngle));
+            Vector3 dir = widthAlongX ? new Vector3(0f, 0f, 1f) : new Vector3(1f, 0f, 0f);
+
+            Vector3 c0;
+            if (floor.DoorCrossingByName.TryGetValue(doorName, out Vector3 baked) &&
+                TryGetSwingDoorwayCentre(floor, doorName, baked, out Vector3 centred))
+            {
+                c0 = centred;
+            }
+            else
+            {
+                Vector2 w = floor.CellToWorld((int)Math.Round(mx), (int)Math.Round(mz));
+                c0 = new Vector3(w.x, floor.FloorY, w.y);
+            }
+            c0.y = floor.FloorY;
+
+            float side = (c0.x - nearPos.x) * dir.x + (c0.z - nearPos.z) * dir.z;
+            if (side < 0f) dir = -dir;
+            centre = c0;
+            through = dir;
+            return true;
+        }
+
+        // Door-target goals squarely in front of the doorway on the player's side, so that when
+        // the walk ends, walking straight forward goes through. Null when none qualify.
+        private const float DoorFrontLateralM = 0.35f;
+        private const float DoorFrontMinDepthM = 0.7f;
+
+        private static List<NodeKey> FrontOfDoorwayGoals(Floor floor, string doorName, Vector3 startPos, List<NodeKey> goals)
+        {
+            if (goals == null || goals.Count == 0) return null;
+            if (!TryGetDoorwayFrame(floor, doorName, startPos, out Vector3 c, out Vector3 through))
+                return null;
+            Vector3 across = new Vector3(through.z, 0f, -through.x);
+            for (int pass = 0; pass < 2; pass++)
+            {
+                float lateral = pass == 0 ? DoorFrontLateralM : DoorFrontLateralM * 2f;
+                var keep = new List<NodeKey>();
+                for (int i = 0; i < goals.Count; i++)
+                {
+                    NodeKey g = goals[i];
+                    if (IsVirtual(g) || g.Floor != floor.Label) continue;
+                    Vector2 w = floor.CellToWorld(g.Ix, g.Iz);
+                    float dx = w.x - c.x, dz = w.y - c.z;
+                    float depth = dx * through.x + dz * through.z;      // negative = player's side
+                    float lat = dx * across.x + dz * across.z;
+                    if (depth <= -DoorFrontMinDepthM && Mathf.Abs(lat) <= lateral)
+                        keep.Add(g);
+                }
+                if (keep.Count > 0) return keep;
+            }
+            return null;
+        }
+
         // Goal cells need this many cells (0.2 m each) of clearance for the real 0.8 m capsule to
         // stand without touching anything the 0.4 m bake dilation already accounts for.
         private const int BodyGoalClearanceCells = 3;

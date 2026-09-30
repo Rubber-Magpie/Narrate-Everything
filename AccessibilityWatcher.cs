@@ -1684,7 +1684,8 @@ namespace DateEverythingAccess
             // closet door that swings toward the player then occupies the standpoint the route was
             // heading for, so the player pushed into the leaf until the stall watchdog gave up. Once
             // the door is open, finished moving, and the player is near it, that is arrival.
-            if (IsDoorTargetOpenNearby(route, playerPos))
+            if (IsDoorTargetOpenNearby(route, playerPos) &&
+                !TryGetRouteDoorFrame(route, playerPos, out _, out _, out _))
             {
                 LastSweepDriveArrived = true;
                 ApplyNavigationInput(Vector3.zero, Vector3.zero);
@@ -1704,6 +1705,42 @@ namespace DateEverythingAccess
                 {
                     ApplyNavigationInput(Vector3.zero, Vector3.zero);
                     StopNavigationWithAnnouncement("navigation_arrived");
+                    return;
+                }
+
+                // DOOR TARGET: the planner parked the player squarely in front of the doorway;
+                // turn to face straight through it, so walking forward from here goes through.
+                if (TryGetRouteDoorFrame(route, playerPos, out DoorPortal frameDoor, out _, out Vector3 through))
+                {
+                    Vector3 flatFwd = playerTransform.forward;
+                    flatFwd.y = 0f;
+                    float yawErr = flatFwd.sqrMagnitude > 1e-6f
+                        ? Vector3.SignedAngle(flatFwd.normalized, through, Vector3.up) : 180f;
+                    if (_facingSince == 0f) _facingSince = Time.unscaledTime;
+                    bool faceTimedOut = Time.unscaledTime - _facingSince >= DoorFaceTimeoutSeconds;
+                    if (Mathf.Abs(yawErr) > DoorFaceToleranceDeg && !faceTimedOut)
+                    {
+                        Camera faceCam = Camera.main;
+                        float eyeY = faceCam != null ? faceCam.transform.position.y : playerPos.y + 1.5f;
+                        Vector3 aheadPoint = new Vector3(playerPos.x + through.x * 6f, eyeY, playerPos.z + through.z * 6f);
+                        Vector3 faceLook = GetLookInputTowardRouteTarget(playerTransform, aheadPoint, 0.5f);
+                        ApplyNavigationInput(Vector3.zero, faceLook);
+                        _lastAutoWalkMove = Vector3.zero;
+                        _lastAutoWalkLook = faceLook;
+                        _hasAutoWalkInput = true;
+                        _steerPoint = aheadPoint;
+                        _steerMode = SteerFace;
+                        return;
+                    }
+
+                    ApplyNavigationInput(Vector3.zero, Vector3.zero);
+                    if (Main.Log != null)
+                        Main.Log.LogInfo("SimpleNav door arrival: door=" + frameDoor.gameObject.name +
+                            " facing through yawErr=" + yawErr.ToString("F1") + " open=" + frameDoor.open +
+                            " locked=" + frameDoor.locked + " player=" + FormatVector3(playerPos));
+                    StopNavigationWithAnnouncement(frameDoor.open
+                        ? "navigation_arrived_door_open_ahead"
+                        : frameDoor.locked ? "navigation_arrived_door_locked_ahead" : "navigation_arrived_door_ahead");
                     return;
                 }
 
@@ -2105,6 +2142,21 @@ namespace DateEverythingAccess
         }
 
         private const float DoorTargetDoneWithinM = 3.0f;
+        private const float DoorFaceToleranceDeg = 2f;
+        private const float DoorFaceTimeoutSeconds = 3f;
+
+        // The route's target door (hinged or sliding) and its doorway frame from the bake, when
+        // it is a room or closet door. Container doors and non-door targets return false.
+        private static bool TryGetRouteDoorFrame(SimpleNavRoute route, Vector3 playerPos,
+            out DoorPortal door, out Vector3 centre, out Vector3 through)
+        {
+            centre = default;
+            through = default;
+            door = FindSimpleRouteTargetDoor(route);
+            if (door == null || door.gameObject == null)
+                return false;
+            return SimpleNavPlanner.TryGetDoorwayFrame(door.gameObject.name, playerPos, out centre, out through);
+        }
 
         private static bool IsDoorTargetOpenNearby(SimpleNavRoute route, Vector3 playerPos)
         {

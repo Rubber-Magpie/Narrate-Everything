@@ -272,6 +272,9 @@ namespace DateEverythingAccess
             Add("aim_far", "far {0}");
             Add("aim_and", "{0} and {1}");
             Add("aim_almost", "almost");
+            Add("navigation_arrived_door_ahead", "Arrived. The door is straight ahead.");
+            Add("navigation_arrived_door_open_ahead", "Arrived. The doorway is straight ahead; walk forward to go through.");
+            Add("navigation_arrived_door_locked_ahead", "Arrived. The door is straight ahead, but it is locked.");
             Add("navigation_no_path", "No path found to {0}.");
             Add("navigation_tutorial_gift_delivery_trigger", "Gift delivery trigger");
             Add("navigation_planner_not_ready", "Navigation data not ready yet.");
@@ -500,6 +503,9 @@ namespace DateEverythingAccess
             AddJa("aim_far", "大きく{0}");
             AddJa("aim_and", "{0}、{1}");
             AddJa("aim_almost", "もう少し");
+            AddJa("navigation_arrived_door_ahead", "到着しました。ドアは正面です。");
+            AddJa("navigation_arrived_door_open_ahead", "到着しました。出入口は正面です。まっすぐ進むと通り抜けます。");
+            AddJa("navigation_arrived_door_locked_ahead", "到着しました。ドアは正面ですが、鍵がかかっています。");
             AddJa("navigation_no_path", "{0} への経路が見つかりません。");
             AddJa("navigation_tutorial_gift_delivery_trigger", "ギフト配達トリガー");
             AddJa("navigation_planner_not_ready", "ナビゲーションデータの準備がまだできていません。");
