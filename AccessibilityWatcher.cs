@@ -1746,6 +1746,24 @@ namespace DateEverythingAccess
                 // turn to face straight through it, so walking forward from here goes through.
                 if (TryGetRouteDoorFrame(route, playerPos, out DoorPortal frameDoor, out _, out Vector3 through))
                 {
+                    // Arrived beside a closed door: open it from here (outside its swing), wait for
+                    // the swing, then re-plan to the spot squarely in front (handled above).
+                    if (!frameDoor.open && !frameDoor.locked)
+                    {
+                        if (_doorTargetOpenAttemptAt == 0f) _doorTargetOpenAttemptAt = Time.unscaledTime;
+                        if (Time.unscaledTime - _doorTargetOpenAttemptAt < DoorTargetOpenGiveUpSeconds)
+                        {
+                            ApplyNavigationInput(Vector3.zero, Vector3.zero);
+                            _lastAutoWalkMove = Vector3.zero;
+                            _lastAutoWalkLook = Vector3.zero;
+                            _steerMode = SteerNone;
+                            SimpleNavBridge.TryOpenDoorIfNeeded(frameDoor, playerPos);
+                            _doorTargetReplanPending = true;
+                            ResetAutoWalkProgress();
+                            return;
+                        }
+                    }
+
                     Vector3 flatFwd = playerTransform.forward;
                     flatFwd.y = 0f;
                     float yawErr = flatFwd.sqrMagnitude > 1e-6f
@@ -1838,7 +1856,11 @@ namespace DateEverythingAccess
 
             // Open the segment's tagged door if needed.
             bool segmentHasDoor = SimpleNavBridge.ActiveDoor != null;
-            if (segmentHasDoor)
+            // ...except the TARGET door of a door route: that one is opened only once the player
+            // has arrived at her spot beside it. Opening it on the way let a door that swings
+            // toward the player (the office closet) swing into her while she was still walking
+            // through its arc.
+            if (segmentHasDoor && !IsRouteTargetDoorWithFrame(route, SimpleNavBridge.ActiveDoor, playerPos))
                 SimpleNavBridge.TryOpenActiveDoorIfNeeded(playerPos);
 
             // Steer along the planned polyline with a short pure-pursuit lookahead so the
@@ -2176,6 +2198,17 @@ namespace DateEverythingAccess
         private const float DoorTargetDoneWithinM = 3.0f;
         private const float DoorFaceToleranceDeg = 2f;
         private bool _doorTargetReplanPending;
+        private float _doorTargetOpenAttemptAt;
+        private const float DoorTargetOpenGiveUpSeconds = 2f;
+
+        private static bool IsRouteTargetDoorWithFrame(SimpleNavRoute route, DoorPortal door, Vector3 playerPos)
+        {
+            if (door == null || door.gameObject == null)
+                return false;
+            if (!TryGetRouteDoorFrame(route, playerPos, out DoorPortal target, out _, out _))
+                return false;
+            return target.gameObject == door.gameObject;
+        }
         private const float DoorFaceTimeoutSeconds = 3f;
 
         // The route's target door (hinged or sliding) and its doorway frame from the bake, when
@@ -5436,6 +5469,7 @@ namespace DateEverythingAccess
             _isAutoWalking = true;
             _stallReplans = 0;
             _doorTargetReplanPending = false;
+            _doorTargetOpenAttemptAt = 0f;
             LogCapsuleDimensionsOnce();
             _lastAutoWalkPosition = BetterPlayerControl.Instance != null ? BetterPlayerControl.Instance.transform.position : Vector3.zero;
             _lastAutoWalkProgressTime = Time.unscaledTime;
