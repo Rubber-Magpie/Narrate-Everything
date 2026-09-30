@@ -536,24 +536,24 @@ namespace DateEverythingAccess
             // straight forward afterwards goes through it. Falls back to the normal goals below.
             string frontDoorName = targetDoor != null && targetDoor.gameObject != null
                 ? targetDoor.gameObject.name : targetName;
-            List<NodeKey> frontGoals = FrontOfDoorwayGoals(goalFloor, frontDoorName, startPos, goals);
-            if (frontGoals != null)
+            List<NodeKey> doorFrontGoals = FrontOfDoorwayGoals(goalFloor, frontDoorName, startPos, goals);
+            if (doorFrontGoals != null)
             {
                 for (int need = BodyGoalClearanceCells; need >= 0 && !roomyPlanned; need--)
                 {
-                    List<NodeKey> set = need > 0 ? GoalsWithClearance(frontGoals, need) : frontGoals;
+                    List<NodeKey> set = need > 0 ? GoalsWithClearance(doorFrontGoals, need) : doorFrontGoals;
                     if (need > 0 && set == null)
                     {
                         // GoalsWithClearance returns null for "all qualify" too; check which.
                         bool all = true;
-                        for (int i = 0; i < frontGoals.Count && all; i++)
+                        for (int i = 0; i < doorFrontGoals.Count && all; i++)
                         {
-                            NodeKey g = frontGoals[i];
+                            NodeKey g = doorFrontGoals[i];
                             Floor gf = FloorByLabel(g.Floor);
                             if (gf == null || gf.Clearance(g.Ix, g.Iz) < need) all = false;
                         }
                         if (!all) continue;
-                        set = frontGoals;
+                        set = doorFrontGoals;
                     }
                     if (AStar(startNode, set, goalFloor.Label, targetPos.x, targetPos.z, out path, out totalCost, goalQuality))
                     {
