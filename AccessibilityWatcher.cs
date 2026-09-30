@@ -3557,6 +3557,7 @@ namespace DateEverythingAccess
             if (!genericObjective &&
                 TryResolveCurrentObjectiveInteractable(out InteractableObj interactable, out string targetZone, out string targetLabel))
             {
+                LogObjectivePick("specific", interactable, targetZone, targetLabel);
                 SetTrackedInteractable(interactable, targetZone, targetLabel);
                 BeginNavigationAndStartTrackerTone(targetZone, targetLabel);
                 return;
@@ -3566,6 +3567,7 @@ namespace DateEverythingAccess
             // "find more datables" objective.
             if (TryResolveContextDefaultTarget(out InteractableObj contextInteractable, out string contextZone, out string contextLabel))
             {
+                LogObjectivePick("context", contextInteractable, contextZone, contextLabel);
                 SetTrackedInteractable(contextInteractable, contextZone, contextLabel);
                 BeginNavigationAndStartTrackerTone(contextZone, contextLabel);
                 return;
@@ -3575,12 +3577,22 @@ namespace DateEverythingAccess
             if (genericObjective &&
                 TryResolveCurrentObjectiveInteractable(out InteractableObj genericInteractable, out string genericZone, out string genericLabel))
             {
+                LogObjectivePick("generic", genericInteractable, genericZone, genericLabel);
                 SetTrackedInteractable(genericInteractable, genericZone, genericLabel);
                 BeginNavigationAndStartTrackerTone(genericZone, genericLabel);
                 return;
             }
 
             ScreenReader.Say(Loc.Get("navigation_no_objective"));
+        }
+
+        private static void LogObjectivePick(string branch, InteractableObj target, string zone, string label)
+        {
+            if (Main.Log == null) return;
+            Main.Log.LogInfo("Ctrl+O objective branch=" + branch +
+                " target=" + (target != null ? target.gameObject.name + " internal=" + target.InternalName() : "<null>") +
+                " zone=" + (zone ?? "<null>") + " label=" + (label ?? "<null>") +
+                " | " + DescribeContextDefaultState());
         }
 
         // Shared selection tail: BeginNavigation, plan the route, and start the tracker tone at

@@ -82,6 +82,19 @@ namespace DateEverythingAccess
             return false;
         }
 
+        // One-line summary of the context-default conditions, for the Ctrl+O log line.
+        private static string DescribeContextDefaultState()
+        {
+            Sofa sofa = FindObjectOfType<Sofa>();
+            string bunny = sofa == null ? "noSofa" : sofa.dustBunny == null ? "noBunnyRef" :
+                ("bunnyActive=" + sofa.dustBunny.activeInHierarchy);
+            bool found = TryFindDatableByInternalName(ContextDustBunnyInternalName, out InteractableObj d);
+            return "dollyMet=" + IsDatableMet(ContextDustBunnyInternalName) + " " + bunny +
+                " dollyFound=" + found + (found && d != null ? "(" + d.gameObject.name + ")" : string.Empty) +
+                " zoeyMet=" + IsDatableMet(ContextGhostInternalName) + " ghost=" + IsGhostManifested() +
+                " airynMet=" + IsDatableMet(ContextThermostatInternalName) + " cold=" + IsThermostatCold();
+        }
+
         private static bool IsDatableMet(string internalName)
         {
             Save save = Singleton<Save>.Instance;
