@@ -518,6 +518,10 @@ namespace DateEverythingAccess
                             _strictLosCollider = null;
                             _strictLosTarget = null;
                         }
+                        // These passed the game-exact test, so the lenient-mode front/back guess below
+                        // must not second-guess them (it kept only the rose stem's outdoor side).
+                        if (losClear.Count > 0 && retryIo != null)
+                            usedStrictLos = true;
                         if (Main.Log != null)
                             Main.Log.LogInfo("SimpleNavPlanner.Plan: sightline retry from the real camera height (" +
                                 liveEye.ToString("F2") + " m) kept " + losClear.Count + " standpoint(s) for target=" +
