@@ -1294,6 +1294,10 @@ namespace DateEverythingAccess
         private const int LeafExtraMarginCells = 2;
         // Pad around a live open sliding panel's collider bounds (the bake's own capsule margin).
         private const float SliderPanelPadM = 0.4f;
+        // Set while re-planning without the open slider panels' footprints (see ToggleAutoWalk).
+        public static bool IgnoreOpenSliderPanels;
+        // True when the last door-state pass blocked at least one open slider panel.
+        public static bool AnyOpenSliderPanelsBlocked;
 
         private static void WidenPassageDoorLeaves()
         {
@@ -1615,10 +1619,12 @@ namespace DateEverythingAccess
             // slid panel and the player stalled against it (Doors_Gym_ClosetInner). Block the LIVE
             // footprint of every open slider panel so the route takes the half that is actually open.
             int sliderPanelCells = 0;
-            for (int i = 0; i < sliders.Length; i++)
+            AnyOpenSliderPanelsBlocked = false;
+            for (int i = 0; i < sliders.Length && !IgnoreOpenSliderPanels; i++)
             {
                 SlidingDoor door = sliders[i];
                 if (door == null || !door.open) continue;
+                AnyOpenSliderPanelsBlocked = true;
                 Collider[] cols = door.GetComponentsInChildren<Collider>();
                 for (int c = 0; c < cols.Length; c++)
                 {
@@ -1627,6 +1633,10 @@ namespace DateEverythingAccess
                     Bounds b = col.bounds;
                     Floor f = FloorForY(b.min.y, FloorMatchToleranceM + 1.0f);
                     if (f == null) continue;
+                    if (Main.Log != null)
+                        Main.Log.LogInfo("SimpleNavPlanner open slider panel " + door.gameObject.name + "/" + col.gameObject.name +
+                            " x " + b.min.x.ToString("F2") + ".." + b.max.x.ToString("F2") +
+                            " z " + b.min.z.ToString("F2") + ".." + b.max.z.ToString("F2"));
                     f.WorldToCell(b.min.x - SliderPanelPadM, b.min.z - SliderPanelPadM, out int ix0, out int iz0);
                     f.WorldToCell(b.max.x + SliderPanelPadM, b.max.z + SliderPanelPadM, out int ix1, out int iz1);
                     for (int ix = ix0; ix <= ix1; ix++)
@@ -3440,6 +3450,40 @@ namespace DateEverythingAccess
                 // when the opening lies ahead between a and b, so we never steer backward.
                 // The destination door (final segment, door==target) is excluded — its
                 // approach is governed by operable_from_cells goal selection.
+                // TWO DOORS ON ONE STRETCH. A straight run can pass through two doorways (the
+                // shared upstairs bathroom: in by the gym door, out by the bedroom door). Only one
+                // door per stretch is ever opened, so the second stayed shut and she walked into
+                // it. Split the stretch at each doorway so each door gets its own turn.
+                if (doors.Count >= 2)
+                {
+                    var splitDoors = new List<string>();
+                    var splitAt = new List<Vector3>();
+                    var splitT = new List<float>();
+                    for (int di = 0; di < doors.Count; di++)
+                    {
+                        if (!TryGetDoorOpeningCenter(new List<string>(1) { doors[di] }, a, b, out Vector3 dc))
+                            continue;
+                        float dt = ProjectParamXZ(a, b, dc);
+                        int at = 0;
+                        while (at < splitT.Count && splitT[at] <= dt) at++;
+                        splitT.Insert(at, dt);
+                        splitAt.Insert(at, dc);
+                        splitDoors.Insert(at, doors[di]);
+                    }
+                    if (splitDoors.Count >= 2)
+                    {
+                        for (int k = 0; k < splitDoors.Count; k++)
+                            AddSemanticDoorWaypoint(route, new List<string>(1) { splitDoors[k] }, splitAt[k],
+                                SimpleNavWaypointKind.DoorOpening, null);
+                        var rest = new List<string>(doors.Count) { splitDoors[splitDoors.Count - 1] };
+                        for (int di = 0; di < doors.Count; di++)
+                            if (!splitDoors.Contains(doors[di])) rest.Add(doors[di]);
+                        SimpleNavWaypointKind splitEndKind = KindFor(i + 1, isFinalSegment ? SimpleNavWaypointKind.Target : SimpleNavWaypointKind.Navigation);
+                        AddSemanticDoorWaypoint(route, rest, b, splitEndKind, null);
+                        continue;
+                    }
+                }
+
                 if (!isFinalSegment && doors.Count > 0)
                 {
                     Vector3 opening;
@@ -3759,6 +3803,18 @@ namespace DateEverythingAccess
                 }
             }
             return false;
+        }
+
+        // True when the player stands where this door's leaf swings (so opening it now would swing
+        // it into her).
+        public static bool IsInDoorSwing(string doorName, Vector3 playerPos)
+        {
+            if (string.IsNullOrEmpty(doorName) || !EnsureLoaded()) return false;
+            Floor floor = NearestFloorByY(playerPos.y);
+            if (floor == null || !floor.DoorBlockedByName.TryGetValue(doorName, out HashSet<long> swing) || swing.Count == 0)
+                return false;
+            floor.WorldToCell(playerPos.x, playerPos.z, out int px, out int pz);
+            return CellNearAny(px, pz, swing, DoorSwingClearCells);
         }
 
         private static bool CellNearAny(int ix, int iz, HashSet<long> cells, int within)

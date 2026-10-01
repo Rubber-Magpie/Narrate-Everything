@@ -2222,6 +2222,7 @@ namespace DateEverythingAccess
         private const float DoorStandOpenTimeoutSeconds = 3f;
         private const float DoorStandFallbackBackM = 1.5f;
         private const int DoorStandMaxAttempts = 2;
+        private const float DoorStandSwingCheckM = 5f;
         private int _doorStandPhase;
         private int _doorStandAttempts;
         private Vector3 _doorStandPoint;
@@ -2248,10 +2249,17 @@ namespace DateEverythingAccess
 
             if (_doorStandPhase == DoorStandNone)
             {
-                if (_doorStandAttempts >= DoorStandMaxAttempts || door.locked || !door.IsSwing ||
-                    !SimpleNavBridge.IsDoorRefusingToOpen(door, DoorRefusalWindowSeconds))
+                if (_doorStandAttempts >= DoorStandMaxAttempts || door.locked || !door.IsSwing)
                     return false;
                 string doorName = door.gameObject.name;
+                // Also before opening at all: a door that swings toward her while she stands in
+                // its path hits her and stops half open (leaving the shared upstairs bathroom
+                // for the bedroom, the door swung into her and she stalled against it).
+                bool inSwing = !door.open && !SimpleNavBridge.IsDoorMoving(door) &&
+                    GetFlatDistance(playerPos, door.gameObject.transform.position) <= DoorStandSwingCheckM &&
+                    SimpleNavPlanner.IsInDoorSwing(doorName, playerPos);
+                if (!inSwing && !SimpleNavBridge.IsDoorRefusingToOpen(door, DoorRefusalWindowSeconds))
+                    return false;
                 if (!SimpleNavPlanner.TryGetDoorOpeningStandpoint(doorName, playerPos, out Vector3 stand))
                 {
                     Collider doorCol = door.GetComponent();
@@ -2268,7 +2276,7 @@ namespace DateEverythingAccess
                 _doorStandPhase = DoorStandWalking;
                 _doorStandPhaseStart = Time.unscaledTime;
                 if (Main.Log != null)
-                    Main.Log.LogInfo("SimpleNav door refused to open: door=" + doorName + " player=" +
+                    Main.Log.LogInfo("SimpleNav door " + (inSwing ? "would swing into her" : "refused to open") + ": door=" + doorName + " player=" +
                         FormatVector3(playerPos) + " stepping back to " + FormatVector3(stand) +
                         " attempt=" + _doorStandAttempts);
             }
@@ -5782,6 +5790,19 @@ namespace DateEverythingAccess
             // and try once more before reporting no path.
             if (route == null && SimpleNavPlanner.ClearRuntimeBlockers() > 0)
                 route = SimpleNavPlanner.Plan(startPos, targetPos, radius, goName, goId, isDatable, target.inkFileName);
+            // An open sliding closet panel is blocked where it now sits; if that seals the closet off
+            // altogether (the gym closet, after autowalk opened its outer panel), plan as if the
+            // panels were where the game lets her walk anyway rather than give up.
+            if (route == null && SimpleNavPlanner.LastFailure == SimpleNavPlanner.PlanFailure.NoPath &&
+                SimpleNavPlanner.AnyOpenSliderPanelsBlocked)
+            {
+                SimpleNavPlanner.IgnoreOpenSliderPanels = true;
+                try { route = SimpleNavPlanner.Plan(startPos, targetPos, radius, goName, goId, isDatable, target.inkFileName); }
+                finally { SimpleNavPlanner.IgnoreOpenSliderPanels = false; }
+                if (Main.Log != null)
+                    Main.Log.LogInfo("ToggleAutoWalk: no path with open slider panels blocked; retry ignoring them " +
+                        (route != null ? "found a route" : "also failed"));
+            }
             if (route == null)
             {
                 // MULTI-PART DATABLE RETRY. A datable is often a whole assembly of InteractableObj
