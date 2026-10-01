@@ -5473,9 +5473,8 @@ namespace DateEverythingAccess
             return view;
         }
 
-        // A datable group with no character name to show is named after one of its objects, and
-        // that used to be whichever came first: the stove's group read "Oven mitt". Prefer the
-        // object the character is named for (stefan_stove -> the stove).
+        // The stove's group, with no character name to show, was named after whichever of its
+        // objects came first ("Oven mitt"); name it after the stove itself.
         private static string MainObjectLabelIfNamedAfterAPart(PickerNode group)
         {
             if (group == null || group.Members == null || group.Members.Count == 0)
@@ -5488,7 +5487,8 @@ namespace DateEverythingAccess
                 return group.Label;
             InteractableObj io = group.Members[0].Interactable;
             string ink = io != null ? io.inkFileName : null;
-            if (string.IsNullOrEmpty(ink))
+            // Only the stove's group is renamed; every other group keeps its usual name.
+            if (!string.Equals(ink, "stefan_stove", StringComparison.OrdinalIgnoreCase))
                 return group.Label;
             string main = ink.Substring(ink.LastIndexOf('_') + 1).Trim();
             if (main.Length < 3)
@@ -7964,6 +7964,14 @@ namespace DateEverythingAccess
 
             if (sections == null || sections.Count == 0)
             {
+                // Not on a stepper screen: PageUp/PageDown step through the bulletin board's photos
+                // while the board is selected.
+                if ((_pageDownPending || _pageUpPending) && HandleBulletinBoardPaging(_pageDownPending))
+                {
+                    _pageUpPending = false;
+                    _pageDownPending = false;
+                    return;
+                }
                 // No stepper-eligible screen (or no content yet): drop state so a fresh open starts
                 // at the top, and discard any latched press so it can't fire on the next eligible screen.
                 _sectionStepperSections = null;

@@ -38,6 +38,140 @@ namespace DateEverythingAccess
             }
         }
 
+        // ---- reading the photos ----
+        // The board holds one polaroid per datable per ending (groups "love", "friend", ...), each
+        // hidden until earned and each with its own examine text: the flavour text. While the
+        // board is selected, PageDown / PageUp step through the photos that are up: the mod names
+        // the photo and has the game show its examine text, which the mod then reads as usual.
+        private int _bulletinIndex = -1;
+        private Transform _bulletinBoardSeen;
+        private float _bulletinSeenUntil;
+        private static System.Reflection.MethodInfo _showExamineMethod;
+        private static bool _showExamineLooked;
+        private static bool _bulletinFieldsLogged;
+
+        // True when the press was for the bulletin board (and has been handled).
+        private bool HandleBulletinBoardPaging(bool next)
+        {
+            Transform board = null;
+            InteractableManager manager = Singleton<InteractableManager>.Instance;
+            if (manager != null && manager.activeObject != null)
+                board = FindNamedAncestor(manager.activeObject.transform, "BulletinBoard");
+            if (board != null)
+            {
+                _bulletinBoardSeen = board;
+                _bulletinSeenUntil = Time.unscaledTime + 20f;
+            }
+            else if (_bulletinBoardSeen != null && Time.unscaledTime < _bulletinSeenUntil)
+            {
+                board = _bulletinBoardSeen;   // still reading it (the examine panel is up)
+            }
+            if (board == null)
+                return false;
+
+            List<ObjectExamine> photos = CollectBulletinPhotos(board);
+            if (photos.Count == 0)
+            {
+                ScreenReader.Say(Loc.Get("bulletin_none"));
+                return true;
+            }
+            if (_bulletinIndex < 0 || _bulletinIndex >= photos.Count)
+                _bulletinIndex = next ? 0 : photos.Count - 1;
+            else
+                _bulletinIndex = next ? (_bulletinIndex + 1) % photos.Count : (_bulletinIndex + photos.Count - 1) % photos.Count;
+            _bulletinSeenUntil = Time.unscaledTime + 20f;
+
+            ObjectExamine photo = photos[_bulletinIndex];
+            string group = BulletinGroupLabel(photo.transform.parent != null ? photo.transform.parent.name : string.Empty);
+            string who = BulletinPhotoName(photo.gameObject.name);
+            ScreenReader.Say(Loc.Get("bulletin_photo", group, who, _bulletinIndex + 1, photos.Count));
+            ShowPhotoExamine(photo);
+            return true;
+        }
+
+        private static List<ObjectExamine> CollectBulletinPhotos(Transform board)
+        {
+            var photos = new List<ObjectExamine>();
+            foreach (ObjectExamine ex in board.GetComponentsInChildren<ObjectExamine>(false))
+            {
+                if (ex == null || ex.transform == board || !ex.gameObject.activeInHierarchy) continue;
+                if (ex.GetComponent<SpriteRenderer>() == null) continue;   // the photos are sprites
+                photos.Add(ex);
+            }
+            photos.Sort((a, b) =>
+            {
+                int ga = BulletinGroupOrder(a.transform.parent != null ? a.transform.parent.name : "");
+                int gb = BulletinGroupOrder(b.transform.parent != null ? b.transform.parent.name : "");
+                if (ga != gb) return ga.CompareTo(gb);
+                return string.Compare(a.gameObject.name, b.gameObject.name, StringComparison.OrdinalIgnoreCase);
+            });
+            return photos;
+        }
+
+        private static int BulletinGroupOrder(string group)
+        {
+            switch ((group ?? "").ToLowerInvariant())
+            {
+                case "love": return 0;
+                case "friend": return 1;
+                case "hate": return 2;
+                default: return 3;
+            }
+        }
+
+        private static string BulletinGroupLabel(string group)
+        {
+            switch ((group ?? "").ToLowerInvariant())
+            {
+                case "love": return Loc.Get("bulletin_group_love");
+                case "friend": return Loc.Get("bulletin_group_friend");
+                case "hate": return Loc.Get("bulletin_group_hate");
+                default: return FriendlyRoomName(group);
+            }
+        }
+
+        private static string BulletinPhotoName(string objectName)
+        {
+            Save save = Singleton<Save>.Instance;
+            if (save != null && save.TryGetNameByInternalName(objectName, out string display) &&
+                !string.IsNullOrWhiteSpace(display))
+                return NormalizeIdentifierName(display);
+            return FriendlyRoomName(objectName.Replace('_', ' '));
+        }
+
+        private static void ShowPhotoExamine(ObjectExamine photo)
+        {
+            try
+            {
+                if (!_showExamineLooked)
+                {
+                    _showExamineLooked = true;
+                    _showExamineMethod = typeof(ObjectExamine).GetMethod("ShowExamine",
+                        System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public |
+                        System.Reflection.BindingFlags.NonPublic, null, Type.EmptyTypes, null);
+                }
+                if (!_bulletinFieldsLogged && Main.Log != null)
+                {
+                    _bulletinFieldsLogged = true;
+                    foreach (System.Reflection.FieldInfo f in typeof(ObjectExamine).GetFields(
+                        System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic))
+                    {
+                        object v = null;
+                        try { v = f.GetValue(photo); } catch { }
+                        Main.Log.LogInfo("[bulletin] ObjectExamine." + f.Name + " (" + f.FieldType.Name + ") = " + (v ?? "null"));
+                    }
+                }
+                object result = _showExamineMethod != null ? _showExamineMethod.Invoke(photo, null) : null;
+                if (Main.Log != null)
+                    Main.Log.LogInfo("[bulletin] ShowExamine on " + photo.gameObject.name + " -> " +
+                        (_showExamineMethod == null ? "method not found" : (result ?? "done").ToString()));
+            }
+            catch (Exception ex)
+            {
+                if (Main.Log != null) Main.Log.LogWarning("[bulletin] ShowExamine failed: " + ex.Message);
+            }
+        }
+
         private static Transform FindNamedAncestor(Transform t, string name)
         {
             for (int depth = 0; t != null && depth < 16; depth++, t = t.parent)
