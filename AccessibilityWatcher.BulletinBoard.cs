@@ -95,8 +95,6 @@ namespace DateEverythingAccess
                 types.Add(c.GetType().Name);
                 if (c is TMP_Text tmp && !string.IsNullOrWhiteSpace(tmp.text))
                     sb.Append(" text=\"").Append(tmp.text.Replace("\n", " / ")).Append('"');
-                else if (c is TextMesh tm && !string.IsNullOrWhiteSpace(tm.text))
-                    sb.Append(" text=\"").Append(tm.text.Replace("\n", " / ")).Append('"');
                 else if (c is SpriteRenderer sr && sr.sprite != null)
                     sb.Append(" sprite=").Append(sr.sprite.name);
                 else if (c is Renderer r && r.sharedMaterials != null)
