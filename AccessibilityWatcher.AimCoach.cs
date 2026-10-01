@@ -141,6 +141,7 @@ namespace DateEverythingAccess
             _aimCoachLastSpokeAt = 0f;
             _aimCoachStartedAt = Time.unscaledTime;
             _aimCoachNoAimSince = 0f;
+            _aimCueNextAt = 0f;
 
             string label = GetObjectFacingDisplayName(target);
             if (string.IsNullOrWhiteSpace(label)) label = Loc.Get("unknown_object");
@@ -242,8 +243,21 @@ namespace DateEverythingAccess
             // FINE FINISH. The game's smallest arrow tap still moves the camera several degrees,
             // which overshoots a small target. Once the player has it within a few degrees, the
             // mod makes the last tiny correction itself (see FixedUpdate) and stays quiet.
-            string cue = BuildAimCue(target, out bool aimable, out float yawErr, out float pitchErr,
-                out Vector3 aimPoint, out bool tooSteep);
+            // The aim check casts many rays; ten times a second is plenty for spoken cues and
+            // keeps the game smooth (the final nudge itself still runs every physics step).
+            if (Time.unscaledTime >= _aimCueNextAt)
+            {
+                _aimCueNextAt = Time.unscaledTime + AimCueIntervalSeconds;
+                _aimCueCached = BuildAimCue(target, out _aimCueAimable, out _aimCueYaw, out _aimCuePitch,
+                    out _aimCuePoint, out _aimCueTooSteep);
+                _aimCueCachedUnconfirmed = _aimCueUnconfirmed;
+            }
+            string cue = _aimCueCached;
+            bool aimable = _aimCueAimable;
+            float yawErr = _aimCueYaw, pitchErr = _aimCuePitch;
+            Vector3 aimPoint = _aimCuePoint;
+            bool tooSteep = _aimCueTooSteep;
+            _aimCueUnconfirmed = _aimCueCachedUnconfirmed;
             bool fine = aimable && !tooSteep && !_aimCueUnconfirmed &&
                 Mathf.Max(Mathf.Abs(yawErr), Mathf.Abs(pitchErr)) <= AimCoachFineAssistDeg;
             _aimCoachKeepPoint = aimable ? aimPoint : (Vector3?)null;
@@ -399,6 +413,12 @@ namespace DateEverythingAccess
 
         // Set by BuildAimCue when it is steering at the target's middle without a confirmed spot.
         private static bool _aimCueUnconfirmed;
+        private const float AimCueIntervalSeconds = 0.1f;
+        private float _aimCueNextAt;
+        private string _aimCueCached;
+        private bool _aimCueAimable, _aimCueTooSteep, _aimCueCachedUnconfirmed;
+        private float _aimCueYaw, _aimCuePitch;
+        private Vector3 _aimCuePoint;
         private const float AimRoughExtraReachM = 1.5f;
 
         // The middle of the target, when it is within (a little more than) reach.

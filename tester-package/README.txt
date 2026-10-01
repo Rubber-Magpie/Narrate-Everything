@@ -73,6 +73,7 @@ L - Report the current room and objects relative to the direction you face
 O - Open the known objects list
 Ctrl+O - Track the current objective
 Alt+O - Auto-walk to the selected target, or aiming help when already near it
+W, A, S or D - Stop auto-walk and take over
 Ctrl+F1 - Accessibility settings
 
 In the known objects list: Up and Down move, Enter selects, Backspace closes,

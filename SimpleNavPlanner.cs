@@ -1506,8 +1506,13 @@ namespace DateEverythingAccess
             return _lockedDoorNames.Contains(name);
         }
 
+        // Bumped whenever the live door state is re-applied; per-door caches built from the live
+        // grid (the doorway frame) are thrown away when it changes.
+        private static int _doorStateGeneration;
+
         private static void ApplyLiveDoorState()
         {
+            _doorStateGeneration++;
             for (int i = 0; i < _floors.Count; i++)
             {
                 _floors[i].ExtraNavigable.Clear();
@@ -3557,7 +3562,40 @@ namespace DateEverythingAccess
             return TryGetDoorwayFrame(NearestFloorByY(nearPos.y), doorName, nearPos, out centre, out through);
         }
 
+        // The doorway frame is asked for several times every frame while walking to a door; the
+        // work behind it (the doorway's shape and the middle of its walkable gap) only changes
+        // when the door state does, so it is worked out once per door per door-state change.
+        private sealed class DoorwayFrameCache
+        {
+            public int Generation;
+            public bool Ok;
+            public Vector3 Centre;
+            public Vector3 Dir;
+        }
+        private static readonly Dictionary<string, DoorwayFrameCache> _doorwayFrameCache =
+            new Dictionary<string, DoorwayFrameCache>(StringComparer.Ordinal);
+
         private static bool TryGetDoorwayFrame(Floor floor, string doorName, Vector3 nearPos, out Vector3 centre, out Vector3 through)
+        {
+            centre = default; through = default;
+            if (floor == null || string.IsNullOrEmpty(doorName)) return false;
+            string key = floor.Label + "|" + doorName;
+            if (!_doorwayFrameCache.TryGetValue(key, out DoorwayFrameCache cached) || cached.Generation != _doorStateGeneration)
+            {
+                cached = new DoorwayFrameCache { Generation = _doorStateGeneration };
+                cached.Ok = ComputeDoorwayFrame(floor, doorName, out cached.Centre, out cached.Dir);
+                _doorwayFrameCache[key] = cached;
+            }
+            if (!cached.Ok) return false;
+            Vector3 dir = cached.Dir;
+            float side = (cached.Centre.x - nearPos.x) * dir.x + (cached.Centre.z - nearPos.z) * dir.z;
+            if (side < 0f) dir = -dir;
+            centre = cached.Centre;
+            through = dir;
+            return true;
+        }
+
+        private static bool ComputeDoorwayFrame(Floor floor, string doorName, out Vector3 centre, out Vector3 through)
         {
             centre = default; through = default;
             if (floor == null || string.IsNullOrEmpty(doorName) || _containerDoorNames.Contains(doorName))
@@ -3617,9 +3655,6 @@ namespace DateEverythingAccess
                 c0 = new Vector3(w.x, floor.FloorY, w.y);
             }
             c0.y = floor.FloorY;
-
-            float side = (c0.x - nearPos.x) * dir.x + (c0.z - nearPos.z) * dir.z;
-            if (side < 0f) dir = -dir;
             centre = c0;
             through = dir;
             return true;

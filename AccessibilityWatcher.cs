@@ -2174,10 +2174,25 @@ namespace DateEverythingAccess
             return true;
         }
 
+        // Ray-heavy; recomputed a few times a second while turning to face the target.
+        private static SimpleNavRoute _lookPointCacheRoute;
+        private static Vector3 _lookPointCache;
+        private static float _lookPointCacheUntil;
+
         private static Vector3 ResolveSimpleRouteTargetLookPoint(SimpleNavRoute route)
         {
             if (route == null)
                 return Vector3.zero;
+            if (ReferenceEquals(route, _lookPointCacheRoute) && Time.unscaledTime < _lookPointCacheUntil)
+                return _lookPointCache;
+            _lookPointCache = ComputeSimpleRouteTargetLookPoint(route);
+            _lookPointCacheRoute = route;
+            _lookPointCacheUntil = Time.unscaledTime + 0.2f;
+            return _lookPointCache;
+        }
+
+        private static Vector3 ComputeSimpleRouteTargetLookPoint(SimpleNavRoute route)
+        {
 
             GameObject targetObject = FindSimpleRouteTargetObject(route);
             if (targetObject == null)
@@ -2224,6 +2239,21 @@ namespace DateEverythingAccess
         {
             if (route == null || route.TargetGameObjectId == 0)
                 return null;
+            if (ReferenceEquals(route, _targetObjectCacheRoute))
+            {
+                if (_targetObjectCache != null)
+                    return _targetObjectCache;
+                if (Time.unscaledTime < _targetObjectRetryAt)
+                    return null;
+            }
+            _targetObjectCacheRoute = route;
+            _targetObjectCache = ScanSimpleRouteTargetObject(route);
+            _targetObjectRetryAt = Time.unscaledTime + 1f;
+            return _targetObjectCache;
+        }
+
+        private static GameObject ScanSimpleRouteTargetObject(SimpleNavRoute route)
+        {
 
             InteractableObj[] interactables = FindObjectsOfType<InteractableObj>();
             for (int i = 0; i < interactables.Length; i++)
@@ -2485,10 +2515,28 @@ namespace DateEverythingAccess
         // Resolve the route's TARGET barrier (when the target itself is a door) across both
         // component types — Door and SlidingDoor — by GameObject instance id. Mirrors the
         // tag/open path's uniform treatment so a closet/cabinet door can be a direct nav target.
+        // Per-route caches: these lookups scan every door / interactable in the scene and were
+        // being run several times every frame of an autowalk (the lag that made it hard to stop).
+        private static SimpleNavRoute _targetDoorCacheRoute;
+        private static DoorPortal _targetDoorCache;
+        private static SimpleNavRoute _targetObjectCacheRoute;
+        private static GameObject _targetObjectCache;
+        private static float _targetObjectRetryAt;
+
         private static DoorPortal FindSimpleRouteTargetDoor(SimpleNavRoute route)
         {
             if (route == null || route.TargetGameObjectId == 0)
                 return null;
+            if (ReferenceEquals(route, _targetDoorCacheRoute) &&
+                (_targetDoorCache == null || _targetDoorCache.gameObject != null))
+                return _targetDoorCache;
+            _targetDoorCacheRoute = route;
+            _targetDoorCache = ScanSimpleRouteTargetDoor(route);
+            return _targetDoorCache;
+        }
+
+        private static DoorPortal ScanSimpleRouteTargetDoor(SimpleNavRoute route)
+        {
 
             Door[] doors = FindObjectsOfType<Door>();
             for (int i = 0; i < doors.Length; i++)
@@ -7743,8 +7791,28 @@ namespace DateEverythingAccess
         // Suppressed entirely while a text field or the spoken settings menu is focused so typing and
         // menu navigation aren't hijacked. Edge-detection state is advanced EVERY frame (even when
         // suppressed) so a key held down before focus leaves the field doesn't fire a stale press after.
+        // Pressing a movement key while auto-walk is running stops it, so the player can always take
+        // over, even if the game is slow to respond to Alt+O.
+        private bool _wWasDown, _aWasDown, _sWasDown, _dWasDown;
+
+        private void PollAutoWalkTakeover()
+        {
+            bool w = WasChoiceKeyPressed(KeyCode.W, 0x57, ref _wWasDown);
+            bool a = WasChoiceKeyPressed(KeyCode.A, 0x41, ref _aWasDown);
+            bool sKey = WasChoiceKeyPressed(KeyCode.S, 0x53, ref _sWasDown);
+            bool d = WasChoiceKeyPressed(KeyCode.D, 0x44, ref _dWasDown);
+            if (!_isAutoWalking || !(w || a || sKey || d))
+                return;
+            if (IsTextInputFocused())
+                return;
+            if (Main.Log != null) Main.Log.LogInfo("Auto-walk stopped by a movement key");
+            StopNavigationRuntime();
+            ScreenReader.Say(Loc.Get("navigation_autowalk_stopped"));
+        }
+
         private void PollAccessibilityShortcutKeys()
         {
+            PollAutoWalkTakeover();
             bool lookPressed = WasChoiceKeyPressed(KeyCode.L, VkL, ref _lookAroundKeyWasDown);
             bool objectPressed = WasChoiceKeyPressed(KeyCode.O, VkO, ref _objectTrackerKeyWasDown);
             bool repeatPressed = WasChoiceKeyPressed(KeyCode.BackQuote, VkBacktick, ref _repeatLastKeyWasDown);
