@@ -92,17 +92,12 @@ namespace DateEverythingAccess
         private static List<ObjectExamine> CollectBulletinPhotos(Transform board)
         {
             var photos = new List<ObjectExamine>();
-            Save save = Singleton<Save>.Instance;
-            foreach (ObjectExamine ex in board.GetComponentsInChildren<ObjectExamine>(true))
+            // Only the photos the game has put up (a photo goes up when its datable is realized).
+            foreach (ObjectExamine ex in board.GetComponentsInChildren<ObjectExamine>(false))
             {
-                if (ex == null || ex.transform == board) continue;
+                if (ex == null || ex.transform == board || !ex.gameObject.activeInHierarchy) continue;
                 if (ex.GetComponent<SpriteRenderer>() == null) continue;   // the photos are sprites
-                // A photo counts when the game is showing it, or when the save says it has been
-                // earned: the game keeps every photo hidden in a loaded save (a love ending was
-                // reached, yet its photo was still switched off), so the board itself can't be
-                // trusted to show them.
-                if (ex.gameObject.activeInHierarchy || IsBulletinPhotoEarned(save, ex.transform))
-                    photos.Add(ex);
+                photos.Add(ex);
             }
             photos.Sort((a, b) =>
             {
@@ -112,27 +107,6 @@ namespace DateEverythingAccess
                 return string.Compare(a.gameObject.name, b.gameObject.name, StringComparison.OrdinalIgnoreCase);
             });
             return photos;
-        }
-
-        // The board has a "love" and a "friend" group, one photo per character in each (named by
-        // the character's internal name). Hate endings have no photo.
-        private static bool IsBulletinPhotoEarned(Save save, Transform photo)
-        {
-            if (save == null || photo == null || photo.parent == null) return false;
-            string group = photo.parent.name.ToLowerInvariant();
-            RelationshipStatus wanted;
-            if (group == "love") wanted = RelationshipStatus.Love;
-            else if (group == "friend") wanted = RelationshipStatus.Friend;
-            else return false;
-            try
-            {
-                string internalName = BulletinInternalName(photo.name);
-                return internalName != null && save.GetDateStatus(internalName) == wanted;
-            }
-            catch
-            {
-                return false;   // a variant photo with no character of its own (dirk_clarence, ...)
-            }
         }
 
         // Photo names are the short character name ("skylar"); the save keys characters by
