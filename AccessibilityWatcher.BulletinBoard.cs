@@ -92,11 +92,17 @@ namespace DateEverythingAccess
         private static List<ObjectExamine> CollectBulletinPhotos(Transform board)
         {
             var photos = new List<ObjectExamine>();
-            foreach (ObjectExamine ex in board.GetComponentsInChildren<ObjectExamine>(false))
+            Save save = Singleton<Save>.Instance;
+            foreach (ObjectExamine ex in board.GetComponentsInChildren<ObjectExamine>(true))
             {
-                if (ex == null || ex.transform == board || !ex.gameObject.activeInHierarchy) continue;
+                if (ex == null || ex.transform == board) continue;
                 if (ex.GetComponent<SpriteRenderer>() == null) continue;   // the photos are sprites
-                photos.Add(ex);
+                // A photo counts when the game is showing it, or when the save says it has been
+                // earned: the game keeps every photo hidden in a loaded save (a love ending was
+                // reached, yet its photo was still switched off), so the board itself can't be
+                // trusted to show them.
+                if (ex.gameObject.activeInHierarchy || IsBulletinPhotoEarned(save, ex.transform))
+                    photos.Add(ex);
             }
             photos.Sort((a, b) =>
             {
@@ -106,6 +112,50 @@ namespace DateEverythingAccess
                 return string.Compare(a.gameObject.name, b.gameObject.name, StringComparison.OrdinalIgnoreCase);
             });
             return photos;
+        }
+
+        // The board has a "love" and a "friend" group, one photo per character in each (named by
+        // the character's internal name). Hate endings have no photo.
+        private static bool IsBulletinPhotoEarned(Save save, Transform photo)
+        {
+            if (save == null || photo == null || photo.parent == null) return false;
+            string group = photo.parent.name.ToLowerInvariant();
+            RelationshipStatus wanted;
+            if (group == "love") wanted = RelationshipStatus.Love;
+            else if (group == "friend") wanted = RelationshipStatus.Friend;
+            else return false;
+            try
+            {
+                string internalName = BulletinInternalName(photo.name);
+                return internalName != null && save.GetDateStatus(internalName) == wanted;
+            }
+            catch
+            {
+                return false;   // a variant photo with no character of its own (dirk_clarence, ...)
+            }
+        }
+
+        // Photo names are the short character name ("skylar"); the save keys characters by
+        // internal name ("skylar_specs"). Matched against the internal names in the scene.
+        private static Dictionary<string, string> _bulletinInternalNames;
+
+        private static string BulletinInternalName(string shortName)
+        {
+            if (_bulletinInternalNames == null)
+            {
+                _bulletinInternalNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                foreach (InteractableObj io in UnityEngine.Object.FindObjectsOfType<InteractableObj>())
+                {
+                    string internalName = io != null ? io.InternalName() : null;
+                    if (string.IsNullOrEmpty(internalName)) continue;
+                    int cut = internalName.IndexOf('_');
+                    string key = cut > 0 ? internalName.Substring(0, cut) : internalName;
+                    if (!_bulletinInternalNames.TryGetValue(key, out string existing) || internalName.Length < existing.Length)
+                        _bulletinInternalNames[key] = internalName;
+                }
+            }
+            if (_bulletinInternalNames.TryGetValue(shortName, out string found)) return found;
+            return null;
         }
 
         private static int BulletinGroupOrder(string group)
@@ -133,7 +183,8 @@ namespace DateEverythingAccess
         private static string BulletinPhotoName(string objectName)
         {
             Save save = Singleton<Save>.Instance;
-            if (save != null && save.TryGetNameByInternalName(objectName, out string display) &&
+            string internalName = BulletinInternalName(objectName) ?? objectName;
+            if (save != null && save.TryGetNameByInternalName(internalName, out string display) &&
                 !string.IsNullOrWhiteSpace(display))
                 return NormalizeIdentifierName(display);
             return FriendlyRoomName(objectName.Replace('_', ' '));
@@ -162,6 +213,23 @@ namespace DateEverythingAccess
                     }
                 }
                 object result = _showExamineMethod != null ? _showExamineMethod.Invoke(photo, null) : null;
+                bool shown = ExamineController.Instance != null && ExamineController.Instance.isShown;
+                if (!shown)
+                {
+                    // The game didn't open its examine panel (a photo it hasn't put up yet): read the
+                    // photo's own text directly, if it carries readable prose.
+                    foreach (System.Reflection.FieldInfo f in typeof(ObjectExamine).GetFields(
+                        System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic))
+                    {
+                        if (f.FieldType != typeof(string)) continue;
+                        string text = f.GetValue(photo) as string;
+                        if (!string.IsNullOrWhiteSpace(text) && text.Length > 20 && text.IndexOf(' ') > 0)
+                        {
+                            ScreenReader.Say(NormalizeText(text), interrupt: false, rememberAsRepeatable: true);
+                            break;
+                        }
+                    }
+                }
                 if (Main.Log != null)
                     Main.Log.LogInfo("[bulletin] ShowExamine on " + photo.gameObject.name + " -> " +
                         (_showExamineMethod == null ? "method not found" : (result ?? "done").ToString()));
