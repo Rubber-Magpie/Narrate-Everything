@@ -464,6 +464,7 @@ namespace DateEverythingAccess
         // open=true is treated as a stuck-mid-swing desync (the game's changeDoorRot broke on
         // collidedWithPlayer).
         private const float DoorFullyOpenRotationFraction = 0.95f;
+        private const float DoorStuckRotationFraction = 0.7f;
 
         // Reflected access to Door.startRot (private Vector3 set in Initialize() to the
         // closed orientation).
@@ -744,7 +745,10 @@ namespace DateEverythingAccess
         {
             if (door == null || !door.IsSwing || !door.open || IsDoorMoving(door)) return false;
             float delta = ReadDoorVisualRotationDelta(door);
-            return delta >= 0f && delta < Mathf.Abs(door.range) * DoorFullyOpenRotationFraction;
+            // Clearly short only: a door at rest a few degrees shy of its full swing (the gym
+            // bathroom door settles at 81 of 85) is open, and treating it as stuck made autowalk
+            // shut and reopen it over and over.
+            return delta >= 0f && delta < Mathf.Abs(door.range) * DoorStuckRotationFraction;
         }
 
         public static bool TryOpenActiveDoorIfNeeded(Vector3 playerPos)

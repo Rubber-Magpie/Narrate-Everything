@@ -2067,9 +2067,9 @@ namespace DateEverythingAccess
                 // A swing door she is pressed against (shut, or stopped half open on her): step
                 // back clear of it and open it from there. Opening it where she stands just fails
                 // again, and learning it as an obstacle walls the doorway off.
-                if (portal != null && portal.IsSwing && !portal.locked && _doorStandPhase == DoorStandNone &&
+                if (portal != null && !portal.locked && _doorStandPhase == DoorStandNone &&
                     !IsRouteTargetDoorWithFrame(SimpleNavBridge.ActiveRoute, portal, playerPos) &&
-                    (!portal.open || SimpleNavBridge.IsDoorStuckPartOpen(portal)) &&
+                    (!portal.open || IsDoorStuck(portal)) &&
                     BeginDoorStand(portal, playerTransform, playerPos,
                         portal.open ? "stuck half open against her (stall)" : "shut in her way (stall)"))
                     return true;
@@ -2259,12 +2259,23 @@ namespace DateEverythingAccess
         // the stall recovery can hand over one she walked into).
         private DoorPortal _doorStandDoor;
         private float _doorStandLastToggle;
+        private bool _doorStandToggled;
         private const float DoorStandToggleGapSeconds = 0.9f;
+
+        // A door that says it is open but did not get out of the way: a swing door stopped part
+        // way, or a sliding panel that hit her and stayed across its doorway.
+        private static bool IsDoorStuck(DoorPortal door)
+        {
+            if (door == null || !door.open || SimpleNavBridge.IsDoorMoving(door)) return false;
+            if (door.IsSwing) return SimpleNavBridge.IsDoorStuckPartOpen(door);
+            Collider c = door.GetComponent();
+            return c != null && SimpleNavPlanner.IsSliderStillAcrossItsOpening(door.gameObject.name, c.bounds);
+        }
 
         // Start stand-back-and-open for `door`. `why` is for the log.
         private bool BeginDoorStand(DoorPortal door, Transform playerTransform, Vector3 playerPos, string why)
         {
-            if (door == null || door.gameObject == null || door.locked || !door.IsSwing ||
+            if (door == null || door.gameObject == null || door.locked ||
                 _doorStandAttempts >= DoorStandMaxAttempts)
                 return false;
             string doorName = door.gameObject.name;
@@ -2285,6 +2296,7 @@ namespace DateEverythingAccess
             _doorStandPhase = DoorStandWalking;
             _doorStandPhaseStart = Time.unscaledTime;
             _doorStandLastToggle = 0f;
+            _doorStandToggled = false;
             if (Main.Log != null)
                 Main.Log.LogInfo("SimpleNav door " + why + ": door=" + doorName + " player=" +
                     FormatVector3(playerPos) + " stepping back to " + FormatVector3(stand) +
@@ -2305,7 +2317,7 @@ namespace DateEverythingAccess
 
             if (_doorStandPhase == DoorStandNone)
             {
-                if (_doorStandAttempts >= DoorStandMaxAttempts || door.locked || !door.IsSwing)
+                if (_doorStandAttempts >= DoorStandMaxAttempts || door.locked)
                     return false;
                 string doorName = door.gameObject.name;
                 // Before opening at all: a door that swings toward her while she stands in its
@@ -2314,7 +2326,7 @@ namespace DateEverythingAccess
                 bool inSwing = !door.open && !SimpleNavBridge.IsDoorMoving(door) &&
                     GetFlatDistance(playerPos, door.gameObject.transform.position) <= DoorStandSwingCheckM &&
                     SimpleNavPlanner.IsInDoorSwing(doorName, playerPos);
-                bool stuck = SimpleNavBridge.IsDoorStuckPartOpen(door) &&
+                bool stuck = IsDoorStuck(door) &&
                     GetFlatDistance(playerPos, door.gameObject.transform.position) <= DoorStandSwingCheckM;
                 string why = inSwing ? "would swing into her"
                     : stuck ? "stuck half open against her"
@@ -2324,7 +2336,7 @@ namespace DateEverythingAccess
                     return false;
             }
 
-            bool stuckNow = SimpleNavBridge.IsDoorStuckPartOpen(door);
+            bool stuckNow = IsDoorStuck(door);
             if ((door.open && !stuckNow) || SimpleNavBridge.IsDoorMoving(door))
             {
                 if (SimpleNavBridge.IsDoorMoving(door))
@@ -2385,11 +2397,14 @@ namespace DateEverythingAccess
                 return false;
             }
             HoldForDoorStand();
-            if (stuckNow)
+            if (stuckNow && !_doorStandToggled)
             {
                 if (Time.unscaledTime - _doorStandLastToggle >= DoorStandToggleGapSeconds)
                 {
+                    _doorStandToggled = true;   // shut it once; never keep flapping it
                     _doorStandLastToggle = Time.unscaledTime;
+                    if (Main.Log != null)
+                        Main.Log.LogInfo("SimpleNav shutting door stuck half open to reopen it: door=" + door.gameObject.name);
                     try { door.Interact(); } catch (Exception ex) { if (Main.Log != null) Main.Log.LogWarning("SimpleNav close stuck door threw: " + ex.Message); }
                     _doorStandPhaseStart = Time.unscaledTime;   // give the close and reopen their time
                 }
@@ -7347,7 +7362,12 @@ namespace DateEverythingAccess
                 _lastAnnouncedDialogue = combined;
                 if (Main.Log != null)
                     Main.Log.LogInfo("Dialogue: reading an unvoiced (text-blip) line");
-                ScreenReader.Say(combined, rememberAsRepeatable: true);
+                // Just the line: the speakers here are introduced aloud by the Sassy Chap, so their
+                // name before every line is noise.
+                string spoken = dialogText;
+                if (!string.IsNullOrEmpty(speakerName) && combined.StartsWith(speakerName + ". ", StringComparison.Ordinal))
+                    spoken = combined.Substring(speakerName.Length + 2);
+                ScreenReader.Say(spoken, rememberAsRepeatable: true);
                 return;
             }
             if (now - _unvoicedPendingSince >= UnvoicedWaitForBlipSeconds)

@@ -1633,10 +1633,15 @@ namespace DateEverythingAccess
                     Bounds b = col.bounds;
                     Floor f = FloorForY(b.min.y, FloorMatchToleranceM + 1.0f);
                     if (f == null) continue;
+                    bool stuckAcross = IsSliderStillAcrossItsOpening(door.gameObject.name, b);
                     if (Main.Log != null)
                         Main.Log.LogInfo("SimpleNavPlanner open slider panel " + door.gameObject.name + "/" + col.gameObject.name +
                             " x " + b.min.x.ToString("F2") + ".." + b.max.x.ToString("F2") +
-                            " z " + b.min.z.ToString("F2") + ".." + b.max.z.ToString("F2"));
+                            " z " + b.min.z.ToString("F2") + ".." + b.max.z.ToString("F2") +
+                            (stuckAcross ? " (stuck across its doorway: planned as a door to re-open)" : ""));
+                    // A panel that hit the player and stopped still covers its doorway; plan through
+                    // it as a door, and autowalk shuts and re-opens it from a clear spot on the way.
+                    if (stuckAcross) continue;
                     f.WorldToCell(b.min.x - SliderPanelPadM, b.min.z - SliderPanelPadM, out int ix0, out int iz0);
                     f.WorldToCell(b.max.x + SliderPanelPadM, b.max.z + SliderPanelPadM, out int ix1, out int iz1);
                     for (int ix = ix0; ix <= ix1; ix++)
@@ -3811,15 +3816,48 @@ namespace DateEverythingAccess
         }
 
         // True when the player stands where this door's leaf swings (so opening it now would swing
-        // it into her).
+        // it into her). For a sliding door: when she stands right up against its track, where the
+        // moving panel catches her and stops (the gym closet panels, each stuck a few tenths of a
+        // metre open with her pressed against them).
         public static bool IsInDoorSwing(string doorName, Vector3 playerPos)
         {
             if (string.IsNullOrEmpty(doorName) || !EnsureLoaded()) return false;
             Floor floor = NearestFloorByY(playerPos.y);
-            if (floor == null || !floor.DoorBlockedByName.TryGetValue(doorName, out HashSet<long> swing) || swing.Count == 0)
-                return false;
+            if (floor == null) return false;
             floor.WorldToCell(playerPos.x, playerPos.z, out int px, out int pz);
-            return CellNearAny(px, pz, swing, DoorSwingClearCells);
+            if (floor.DoorBlockedByName.TryGetValue(doorName, out HashSet<long> swing) && swing.Count > 0)
+                return CellNearAny(px, pz, swing, DoorSwingClearCells);
+            if (!_swingPassageDoorNames.Contains(doorName) &&
+                floor.DoorFreedByName.TryGetValue(doorName, out HashSet<long> track) && track.Count > 0)
+                return CellNearAny(px, pz, track, SliderTrackClearCells);
+            return false;
+        }
+
+        private const int SliderTrackClearCells = 4;
+        private const float SliderStuckOverlapFraction = 0.6f;
+
+        // True when an "open" sliding panel still lies across most of its own doorway: it hit the
+        // player and stopped instead of sliding aside. Measured along the doorway's long axis.
+        public static bool IsSliderStillAcrossItsOpening(string doorName, Bounds panel)
+        {
+            if (string.IsNullOrEmpty(doorName) || !EnsureLoaded()) return false;
+            Floor f = FloorForY(panel.min.y, FloorMatchToleranceM + 1.0f);
+            if (f == null || !f.DoorFreedByName.TryGetValue(doorName, out HashSet<long> freed) || freed.Count == 0)
+                return false;
+            float x0 = float.MaxValue, x1 = float.MinValue, z0 = float.MaxValue, z1 = float.MinValue;
+            foreach (long p in freed)
+            {
+                Vector2 w = f.CellToWorld((int)(p >> 32), (int)(uint)p);
+                if (w.x < x0) x0 = w.x; if (w.x > x1) x1 = w.x;
+                if (w.y < z0) z0 = w.y; if (w.y > z1) z1 = w.y;
+            }
+            bool alongX = (x1 - x0) >= (z1 - z0);
+            // The footprint is padded by the bake's 0.4 m body allowance at each end.
+            float lo = (alongX ? x0 : z0) + 0.4f, hi = (alongX ? x1 : z1) - 0.4f;
+            if (hi - lo < 0.2f) return false;
+            float plo = alongX ? panel.min.x : panel.min.z, phi = alongX ? panel.max.x : panel.max.z;
+            float overlap = Mathf.Max(0f, Mathf.Min(hi, phi) - Mathf.Max(lo, plo));
+            return overlap / (hi - lo) >= SliderStuckOverlapFraction;
         }
 
         private static bool CellNearAny(int ix, int iz, HashSet<long> cells, int within)
