@@ -987,6 +987,7 @@ namespace DateEverythingAccess
             AnnounceEngagementIfNeeded();
             AnnounceLoadingIfNeeded();
             AnnounceExamineIfNeeded();
+            DiagnoseBulletinBoardIfNeeded();
             AnnounceUIDialogIfNeeded();
             AnnounceSpecsDetailIfNeeded();
             AnnounceCreditsIfNeeded();
@@ -4660,6 +4661,7 @@ namespace DateEverythingAccess
             // The kitchen cabinets are one character's set: finding any one of them reveals them
             // all. (The laundry-room and bathroom cabinets still have to be found one by one.)
             bool kitchenCabinetsKnown = !includeUnencountered && AnyKitchenCabinetEncountered();
+            bool atticUnlocked = IsAtticUnlocked();
 
             for (int i = 0; i < roster.Count; i++)
             {
@@ -4747,6 +4749,15 @@ namespace DateEverythingAccess
                 if (!TryGetDoorRoom(liveObj.transform, out string zone) &&
                     !TryGetHierarchyRoomForInteractable(liveObj, out zone))
                     zone = ResolveRoomByBounds(fixturePos, candidateFloor);
+                // The attic stays a secret until its door is unlocked: nothing is listed in the
+                // attic, and its door in the upstairs hall is just "Door".
+                if (!atticUnlocked)
+                {
+                    if (string.Equals(zone, RoomSpokenName("Attic"), StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    if (IsUnderNamedAncestor(liveObj.transform, "AtticDoors"))
+                        label = Loc.Get("door_generic");
+                }
                 bool isDoor = IsDoorInteractable(liveObj);
 
                 // Datable grouping key for the collapsed top level — only for MET objects (the
@@ -4949,17 +4960,10 @@ namespace DateEverythingAccess
             int depth = 0;
             Transform houseChild = null;
             Transform house = null;
-            Transform below = null;
             while (current != null && depth < 16)
             {
                 if (_hierarchyRoomNames.TryGetValue(BuildComparisonKey(current.name), out string named))
                 {
-                    // The laundry room's closet (Hoove, a bobby pin) is its own space, and the room
-                    // announcement says "Laundry closet" there, so the lists do too.
-                    if (below != null &&
-                        string.Equals(current.name, "LaundryRoom", StringComparison.OrdinalIgnoreCase) &&
-                        string.Equals(below.name, "Closet", StringComparison.OrdinalIgnoreCase))
-                        named = Loc.Get("room_laundry_closet");
                     roomName = named;
                     return true;
                 }
@@ -4968,7 +4972,6 @@ namespace DateEverythingAccess
                     house = current;
                 else if (house == null)
                     houseChild = current;
-                below = current;
                 current = current.parent;
                 depth++;
             }
@@ -5050,7 +5053,6 @@ namespace DateEverythingAccess
             var t = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             foreach (string r in new[] { "Kitchen", "Office", "LivingRoom", "LaundryRoom", "Bathroom1", "DiningRoom", "Hallway", "PianoRoom" })
                 t[RoomSpokenName(r)] = "ground";
-            t[Loc.Get("room_laundry_closet")] = "ground";
             foreach (string r in new[] { "Gym", "Bedroom", "Bathroom2", "Attic", "UpstairsHall" })
                 t[RoomSpokenName(r)] = "upper";
             return t;
@@ -5082,6 +5084,30 @@ namespace DateEverythingAccess
                 "Doors_Bedroom_ClosetRight_Outer");
             Map("Gym", "Doors_Gym_Bathroom", "Doors_Gym_ClosetInner", "Doors_Gym_ClosetOuter");
             return t;
+        }
+
+        // The attic door has a locked and an unlocked version in the scene; the game shows the
+        // unlocked one once the player has opened the way up.
+        private static bool? _lastAtticUnlocked;
+
+        private static bool IsAtticUnlocked()
+        {
+            GameObject unlocked = GameObject.Find("Doors_Attic_Unlocked");
+            GameObject locked = GameObject.Find("Doors_Attic_Locked");
+            bool result = unlocked != null && unlocked.activeInHierarchy && (locked == null || !locked.activeInHierarchy);
+            if (result != _lastAtticUnlocked && Main.Log != null)
+                Main.Log.LogInfo("Attic door: unlocked=" + result + " (unlocked version " + (unlocked != null ? "active" : "absent") +
+                    ", locked version " + (locked != null ? "active" : "absent") + ")");
+            _lastAtticUnlocked = result;
+            return result;
+        }
+
+        private static bool IsUnderNamedAncestor(Transform t, string name)
+        {
+            for (int depth = 0; t != null && depth < 12; depth++, t = t.parent)
+                if (string.Equals(t.name, name, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            return false;
         }
 
         private static bool TryGetDoorRoom(Transform from, out string room)
@@ -5440,8 +5466,42 @@ namespace DateEverythingAccess
             // The group count the player hears must match what drilling in reveals (deduped by
             // name), or "Sofa, 5 objects" leads to a single-object menu. Recount on distinct labels.
             foreach (PickerNode group in datables.Values)
+            {
                 group.ChildCount = DistinctLabelCount(group.Members);
+                group.Label = MainObjectLabelIfNamedAfterAPart(group);
+            }
             return view;
+        }
+
+        // A datable group with no character name to show is named after one of its objects, and
+        // that used to be whichever came first: the stove's group read "Oven mitt". Prefer the
+        // object the character is named for (stefan_stove -> the stove).
+        private static string MainObjectLabelIfNamedAfterAPart(PickerNode group)
+        {
+            if (group == null || group.Members == null || group.Members.Count == 0)
+                return group != null ? group.Label : null;
+            bool namedAfterPart = false;
+            for (int i = 0; i < group.Members.Count && !namedAfterPart; i++)
+                if (string.Equals(group.Members[i].Label, group.Label, StringComparison.OrdinalIgnoreCase))
+                    namedAfterPart = true;
+            if (!namedAfterPart)
+                return group.Label;
+            InteractableObj io = group.Members[0].Interactable;
+            string ink = io != null ? io.inkFileName : null;
+            if (string.IsNullOrEmpty(ink))
+                return group.Label;
+            string main = ink.Substring(ink.LastIndexOf('_') + 1).Trim();
+            if (main.Length < 3)
+                return group.Label;
+            for (int i = 0; i < group.Members.Count; i++)
+            {
+                string label = group.Members[i].Label;
+                if (!string.IsNullOrEmpty(label) &&
+                    label.Replace(" ", string.Empty).IndexOf(main, StringComparison.OrdinalIgnoreCase) >= 0)
+                    return label;
+            }
+            // The main object itself isn't among the ones found yet: still name the group for it.
+            return FriendlyRoomName(main);
         }
 
         // Number of distinct spoken labels among a group's members (the count after same-name
