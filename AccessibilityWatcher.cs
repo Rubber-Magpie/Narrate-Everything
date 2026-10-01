@@ -1822,8 +1822,10 @@ namespace DateEverythingAccess
                         InteractableObj coachTarget = FindSimpleRouteTargetObject(route) != null
                             ? FindSimpleRouteTargetObject(route).GetComponent<InteractableObj>()
                             : null;
-                        if (coachTarget != null && IsTargetAimableFromHere(coachTarget, out _))
+                        if (coachTarget != null)
                         {
+                            // Always hand over to the aiming help; it steers toward the target's
+                            // middle even when no spot on it is certain to be picked from here.
                             StopNavigationRuntime();
                             StartAimCoach(coachTarget, afterWalk: true);
                             return;
@@ -2158,7 +2160,18 @@ namespace DateEverythingAccess
 
             Transform activeTransform = activeObject.transform;
             Transform targetTransform = targetObject.transform;
-            return activeTransform.IsChildOf(targetTransform) || targetTransform.IsChildOf(activeTransform);
+            if (!activeTransform.IsChildOf(targetTransform) && !targetTransform.IsChildOf(activeTransform))
+                return false;
+            // Parent and child are only the same target when they are the same character. The
+            // teddy bear sits inside the bed's hierarchy, so looking at the bed counted as having
+            // arrived at the teddy bear.
+            InteractableObj activeIo = activeObject.GetComponent<InteractableObj>();
+            InteractableObj targetIo = targetObject.GetComponent<InteractableObj>();
+            if (activeIo != null && targetIo != null &&
+                !string.IsNullOrWhiteSpace(activeIo.inkFileName) && !string.IsNullOrWhiteSpace(targetIo.inkFileName) &&
+                !string.Equals(activeIo.inkFileName, targetIo.inkFileName, StringComparison.OrdinalIgnoreCase))
+                return false;
+            return true;
         }
 
         private static Vector3 ResolveSimpleRouteTargetLookPoint(SimpleNavRoute route)

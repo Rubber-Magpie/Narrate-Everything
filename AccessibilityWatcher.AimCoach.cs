@@ -244,7 +244,7 @@ namespace DateEverythingAccess
             // mod makes the last tiny correction itself (see FixedUpdate) and stays quiet.
             string cue = BuildAimCue(target, out bool aimable, out float yawErr, out float pitchErr,
                 out Vector3 aimPoint, out bool tooSteep);
-            bool fine = aimable && !tooSteep &&
+            bool fine = aimable && !tooSteep && !_aimCueUnconfirmed &&
                 Mathf.Max(Mathf.Abs(yawErr), Mathf.Abs(pitchErr)) <= AimCoachFineAssistDeg;
             _aimCoachKeepPoint = aimable ? aimPoint : (Vector3?)null;
             if (fine && !_aimFineGaveUp)
@@ -322,8 +322,16 @@ namespace DateEverythingAccess
             if (cam == null || bpc == null || target == null)
                 return null;
 
+            _aimCueUnconfirmed = false;
             if (!IsTargetAimableFromHere(target, out Vector3 aim))
-                return null;
+            {
+                // No spot on it that the game would surely pick from here (something partly in the
+                // way, or an odd shape). Still steer toward its middle rather than give up: "Turn
+                // slowly to find it" was no help. The automatic final nudge is left out for these.
+                if (!TryGetRoughAimPoint(target, out aim))
+                    return null;
+                _aimCueUnconfirmed = true;
+            }
             aimable = true;
 
             Vector3 camPos = cam.transform.position;
@@ -387,6 +395,27 @@ namespace DateEverythingAccess
                 return Loc.Get("aim_and", Mathf.Abs(yawErr) >= Mathf.Abs(pitchErr) ? h : v,
                     Mathf.Abs(yawErr) >= Mathf.Abs(pitchErr) ? v : h);
             return h ?? v;
+        }
+
+        // Set by BuildAimCue when it is steering at the target's middle without a confirmed spot.
+        private static bool _aimCueUnconfirmed;
+        private const float AimRoughExtraReachM = 1.5f;
+
+        // The middle of the target, when it is within (a little more than) reach.
+        private static bool TryGetRoughAimPoint(InteractableObj target, out Vector3 aim)
+        {
+            aim = default;
+            BetterPlayerControl bpc = BetterPlayerControl.Instance;
+            if (bpc == null || target == null) return false;
+            Collider best = null;
+            foreach (Collider c in target.GetComponentsInChildren<Collider>())
+                if (c != null && c.enabled && (best == null || c.bounds.size.sqrMagnitude > best.bounds.size.sqrMagnitude))
+                    best = c;
+            Vector3 centre = best != null ? best.bounds.center : target.transform.position;
+            float reach = GetInteractableApproachRadius(target) + AimRoughExtraReachM;
+            if (GetFlatDistance(bpc.transform.position, centre) > reach) return false;
+            aim = centre;
+            return true;
         }
 
         private static string Graded(string direction, float errDeg)

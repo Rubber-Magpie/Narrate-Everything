@@ -1,8 +1,27 @@
 # Builds DateEverythingAccess-Setup.exe with the C# compiler that comes with Windows.
-param([string]$Package, [string]$Out, [string]$Log)
+param([string]$Package, [string]$Out, [string]$Log, [string]$GameDir = "C:\Program Files (x86)\Steam\steamapps\common\Date Everything")
 $ErrorActionPreference = "Stop"
 try {
     "Setup build started $(Get-Date)" | Set-Content -LiteralPath $Log
+
+    # Fresh payload from the installed, working copy of the mod in the game folder.
+    $stage = Join-Path $env:TEMP ("DEAPayload-" + [guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Path (Join-Path $stage "BepInEx\core") -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $stage "BepInEx\plugins") -Force | Out-Null
+    foreach ($f in @(".doorstop_version", "doorstop_config.ini", "winhttp.dll", "Tolk.dll", "nvdaControllerClient64.dll", "THIRD-PARTY-NOTICES.txt")) {
+        Copy-Item -LiteralPath (Join-Path $GameDir $f) -Destination $stage -Force
+    }
+    Copy-Item -LiteralPath (Join-Path $Package "README.txt") -Destination $stage -Force
+    Copy-Item -Path (Join-Path $GameDir "BepInEx\core\*") -Destination (Join-Path $stage "BepInEx\core") -Force
+    foreach ($f in @("DateEverythingAccess.dll", "card_pose_descriptions.en.json", "navigable_region.bake.json")) {
+        Copy-Item -LiteralPath (Join-Path $GameDir ("BepInEx\plugins\" + $f)) -Destination (Join-Path $stage "BepInEx\plugins") -Force
+    }
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $payload = Join-Path $Package "payload.zip"
+    if (Test-Path -LiteralPath $payload) { Remove-Item -LiteralPath $payload -Force }
+    [System.IO.Compression.ZipFile]::CreateFromDirectory($stage, $payload)
+    Remove-Item -LiteralPath $stage -Recurse -Force
+    "Payload built from $GameDir" | Add-Content -LiteralPath $Log
     $provider = New-Object Microsoft.CSharp.CSharpCodeProvider
     $params = New-Object System.CodeDom.Compiler.CompilerParameters
     $params.GenerateExecutable = $true
