@@ -3,11 +3,21 @@
 param([string]$GamePath)
 $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
 $title = "Date Everything Access Setup"
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 
+# A hidden, always-on-top owner so every message box and the folder picker come to the
+# front with keyboard focus (the setup runs without a window of its own).
+$owner = New-Object System.Windows.Forms.Form
+$owner.TopMost = $true
+$owner.ShowInTaskbar = $false
+$owner.StartPosition = "CenterScreen"
+$owner.Size = New-Object System.Drawing.Size(1, 1)
+$owner.Opacity = 0
+
 function Say([string]$text, [string]$buttons = "OK", [string]$icon = "Information") {
-    return [System.Windows.Forms.MessageBox]::Show($text, $title,
+    return [System.Windows.Forms.MessageBox]::Show($owner, $text, $title,
         [System.Windows.Forms.MessageBoxButtons]::$buttons,
         [System.Windows.Forms.MessageBoxIcon]::$icon)
 }
@@ -48,7 +58,7 @@ function Pick-Folder {
     $dlg = New-Object System.Windows.Forms.FolderBrowserDialog
     $dlg.Description = "Choose your Date Everything! game folder, the one that contains Date Everything.exe."
     $dlg.ShowNewFolderButton = $false
-    if ($dlg.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { return $dlg.SelectedPath }
+    if ($dlg.ShowDialog($owner) -eq [System.Windows.Forms.DialogResult]::OK) { return $dlg.SelectedPath }
     return $null
 }
 
