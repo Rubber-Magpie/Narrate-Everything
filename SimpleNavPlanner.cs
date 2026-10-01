@@ -1852,6 +1852,11 @@ namespace DateEverythingAccess
                     float px = w.x - playerPos.x, pz = w.y - playerPos.z;
                     if (px * px + pz * pz < keep2) continue;
                     long key = Floor.PackCell(ix, iz);
+                    // Never learn a doorway itself as blocked. A stall at a door is the leaf or the
+                    // jamb, not the gap; marking the gap walled the room off (after stalling at the
+                    // bedroom's bathroom door, the re-plan went the long way round through the gym).
+                    if (f.DoorByFreedCell.TryGetValue(key, out string doorwayOf) && _bakedDoorNames.Contains(doorwayOf))
+                        continue;
                     if (!f.RuntimeBlockedUntil.ContainsKey(key)) added++;
                     f.RuntimeBlockedUntil[key] = until;
                 }

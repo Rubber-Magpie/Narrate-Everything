@@ -700,7 +700,9 @@ namespace DateEverythingAccess
             {
                 object v = fi.GetValue(door);
                 if (!(v is Vector3 startRot)) return -1f;
-                return Vector3.Distance(door.transform.eulerAngles, startRot);
+                // The true angle between the two orientations: comparing raw Euler numbers read a
+                // door swung to -65 degrees as 295 degrees open.
+                return Quaternion.Angle(Quaternion.Euler(door.transform.eulerAngles), Quaternion.Euler(startRot));
             }
             catch (Exception ex)
             {
@@ -733,6 +735,16 @@ namespace DateEverythingAccess
                 }
             }
             return false;
+        }
+
+        /// <summary>
+        /// True when a swing door says it is open but stopped part way, having hit the player.
+        /// </summary>
+        public static bool IsDoorStuckPartOpen(DoorPortal door)
+        {
+            if (door == null || !door.IsSwing || !door.open || IsDoorMoving(door)) return false;
+            float delta = ReadDoorVisualRotationDelta(door);
+            return delta >= 0f && delta < Mathf.Abs(door.range) * DoorFullyOpenRotationFraction;
         }
 
         public static bool TryOpenActiveDoorIfNeeded(Vector3 playerPos)
@@ -798,7 +810,9 @@ namespace DateEverythingAccess
                     // Sliders translate and have no such partial-pose desync, so this is skipped
                     // for them — open=true + not moving is simply open.
                     visualRotDelta = ReadDoorVisualRotationDelta(door);
-                    float openThreshold = door.range * DoorFullyOpenRotationFraction;
+                    // range is negative for doors that swing the other way (the laundry closet's is
+                    // -65); compare magnitudes or a stuck door never counts as stuck.
+                    float openThreshold = Mathf.Abs(door.range) * DoorFullyOpenRotationFraction;
                     if (visualRotDelta >= 0f && visualRotDelta < openThreshold)
                         skipReason = "door-stuck-player-blocking";
                     else

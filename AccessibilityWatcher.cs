@@ -1854,7 +1854,13 @@ namespace DateEverythingAccess
             // ...except the TARGET door of a door route: autowalk never opens the door it is taking
             // the player to. She stops at the doorway facing it, and the player chooses: open it,
             // walk through, or use the Dateviators on it (Dorian).
-            if (segmentHasDoor && !IsRouteTargetDoorWithFrame(route, SimpleNavBridge.ActiveDoor, playerPos))
+            if (_doorStandPhase != DoorStandNone && _doorStandDoor != null)
+            {
+                // Handling a door already (possibly one the stall recovery handed over).
+                if (ApplyDoorStandToOpen(_doorStandDoor, playerTransform, playerPos))
+                    return;
+            }
+            else if (segmentHasDoor && !IsRouteTargetDoorWithFrame(route, SimpleNavBridge.ActiveDoor, playerPos))
             {
                 if (ApplyDoorStandToOpen(SimpleNavBridge.ActiveDoor, playerTransform, playerPos))
                     return;
@@ -1863,6 +1869,7 @@ namespace DateEverythingAccess
             else
             {
                 _doorStandPhase = DoorStandNone;
+                _doorStandDoor = null;
             }
 
             // Steer along the planned polyline with a short pure-pursuit lookahead so the
@@ -2057,7 +2064,17 @@ namespace DateEverythingAccess
                 Door swing = blocker.GetComponentInParent<Door>();
                 SlidingDoor slide = swing == null ? blocker.GetComponentInParent<SlidingDoor>() : null;
                 DoorPortal portal = swing != null ? DoorPortal.For(swing) : DoorPortal.For(slide);
-                if (portal != null && !portal.open && !portal.locked)
+                // A swing door she is pressed against (shut, or stopped half open on her): step
+                // back clear of it and open it from there. Opening it where she stands just fails
+                // again, and learning it as an obstacle walls the doorway off.
+                if (portal != null && portal.IsSwing && !portal.locked && _doorStandPhase == DoorStandNone &&
+                    !IsRouteTargetDoorWithFrame(SimpleNavBridge.ActiveRoute, portal, playerPos) &&
+                    (!portal.open || SimpleNavBridge.IsDoorStuckPartOpen(portal)) &&
+                    BeginDoorStand(portal, playerTransform, playerPos,
+                        portal.open ? "stuck half open against her (stall)" : "shut in her way (stall)"))
+                    return true;
+                if (portal != null && !portal.open && !portal.locked &&
+                    !IsRouteTargetDoorWithFrame(SimpleNavBridge.ActiveRoute, portal, playerPos))
                 {
                     Main.Log.LogInfo("SimpleNav stall recovery: closed door " + portal.gameObject.name +
                         " in the way at player=" + FormatVector3(playerPos) + " — opening it instead of marking it blocked");
@@ -2238,9 +2255,48 @@ namespace DateEverythingAccess
             ResetAutoWalkProgress();
         }
 
+        // The door being handled by stand-back-and-open (it may not be the route's current door:
+        // the stall recovery can hand over one she walked into).
+        private DoorPortal _doorStandDoor;
+        private float _doorStandLastToggle;
+        private const float DoorStandToggleGapSeconds = 0.9f;
+
+        // Start stand-back-and-open for `door`. `why` is for the log.
+        private bool BeginDoorStand(DoorPortal door, Transform playerTransform, Vector3 playerPos, string why)
+        {
+            if (door == null || door.gameObject == null || door.locked || !door.IsSwing ||
+                _doorStandAttempts >= DoorStandMaxAttempts)
+                return false;
+            string doorName = door.gameObject.name;
+            if (!SimpleNavPlanner.TryGetDoorOpeningStandpoint(doorName, playerPos, out Vector3 stand))
+            {
+                Collider doorCol = door.GetComponent();
+                Vector3 onDoor = doorCol != null ? doorCol.ClosestPointOnBounds(playerPos) : door.gameObject.transform.position;
+                Vector3 away = playerPos - onDoor;
+                away.y = 0f;
+                if (away.sqrMagnitude < 1e-4f)
+                    away = -playerTransform.forward;
+                away.y = 0f;
+                stand = playerPos + away.normalized * DoorStandFallbackBackM;
+            }
+            _doorStandAttempts++;
+            _doorStandDoor = door;
+            _doorStandPoint = stand;
+            _doorStandPhase = DoorStandWalking;
+            _doorStandPhaseStart = Time.unscaledTime;
+            _doorStandLastToggle = 0f;
+            if (Main.Log != null)
+                Main.Log.LogInfo("SimpleNav door " + why + ": door=" + doorName + " player=" +
+                    FormatVector3(playerPos) + " stepping back to " + FormatVector3(stand) +
+                    " attempt=" + _doorStandAttempts);
+            return true;
+        }
+
         // True while this has taken over the frame's movement.
         private bool ApplyDoorStandToOpen(DoorPortal door, Transform playerTransform, Vector3 playerPos)
         {
+            if (_doorStandPhase != DoorStandNone && _doorStandDoor != null)
+                door = _doorStandDoor;
             if (door == null || door.gameObject == null)
             {
                 _doorStandPhase = DoorStandNone;
@@ -2252,52 +2308,44 @@ namespace DateEverythingAccess
                 if (_doorStandAttempts >= DoorStandMaxAttempts || door.locked || !door.IsSwing)
                     return false;
                 string doorName = door.gameObject.name;
-                // Also before opening at all: a door that swings toward her while she stands in
-                // its path hits her and stops half open (leaving the shared upstairs bathroom
-                // for the bedroom, the door swung into her and she stalled against it).
+                // Before opening at all: a door that swings toward her while she stands in its
+                // path hits her and stops half open (leaving the shared upstairs bathroom for the
+                // bedroom, the door swung into her and she stalled against it).
                 bool inSwing = !door.open && !SimpleNavBridge.IsDoorMoving(door) &&
                     GetFlatDistance(playerPos, door.gameObject.transform.position) <= DoorStandSwingCheckM &&
                     SimpleNavPlanner.IsInDoorSwing(doorName, playerPos);
-                if (!inSwing && !SimpleNavBridge.IsDoorRefusingToOpen(door, DoorRefusalWindowSeconds))
+                bool stuck = SimpleNavBridge.IsDoorStuckPartOpen(door) &&
+                    GetFlatDistance(playerPos, door.gameObject.transform.position) <= DoorStandSwingCheckM;
+                string why = inSwing ? "would swing into her"
+                    : stuck ? "stuck half open against her"
+                    : SimpleNavBridge.IsDoorRefusingToOpen(door, DoorRefusalWindowSeconds) ? "refused to open"
+                    : null;
+                if (why == null || !BeginDoorStand(door, playerTransform, playerPos, why))
                     return false;
-                if (!SimpleNavPlanner.TryGetDoorOpeningStandpoint(doorName, playerPos, out Vector3 stand))
-                {
-                    Collider doorCol = door.GetComponent();
-                    Vector3 onDoor = doorCol != null ? doorCol.ClosestPointOnBounds(playerPos) : door.gameObject.transform.position;
-                    Vector3 away = playerPos - onDoor;
-                    away.y = 0f;
-                    if (away.sqrMagnitude < 1e-4f)
-                        away = -playerTransform.forward;
-                    away.y = 0f;
-                    stand = playerPos + away.normalized * DoorStandFallbackBackM;
-                }
-                _doorStandAttempts++;
-                _doorStandPoint = stand;
-                _doorStandPhase = DoorStandWalking;
-                _doorStandPhaseStart = Time.unscaledTime;
-                if (Main.Log != null)
-                    Main.Log.LogInfo("SimpleNav door " + (inSwing ? "would swing into her" : "refused to open") + ": door=" + doorName + " player=" +
-                        FormatVector3(playerPos) + " stepping back to " + FormatVector3(stand) +
-                        " attempt=" + _doorStandAttempts);
             }
 
-            if (door.open || SimpleNavBridge.IsDoorMoving(door))
+            bool stuckNow = SimpleNavBridge.IsDoorStuckPartOpen(door);
+            if ((door.open && !stuckNow) || SimpleNavBridge.IsDoorMoving(door))
             {
                 if (SimpleNavBridge.IsDoorMoving(door))
                 {
                     HoldForDoorStand();
                     return true;
                 }
-                _doorStandPhase = DoorStandNone;
-                if (Main.Log != null)
-                    Main.Log.LogInfo("SimpleNav door opened from standing back: door=" + door.gameObject.name + " — re-planning");
-                if (!TryPlanAndInstallSimpleNavRoute())
+                if (_doorStandPhase == DoorStandOpening)
                 {
-                    StopNavigationRuntime();
+                    _doorStandPhase = DoorStandNone;
+                    _doorStandDoor = null;
+                    if (Main.Log != null)
+                        Main.Log.LogInfo("SimpleNav door opened from standing back: door=" + door.gameObject.name + " — re-planning");
+                    if (!TryPlanAndInstallSimpleNavRoute())
+                    {
+                        StopNavigationRuntime();
+                        return true;
+                    }
+                    ResetAutoWalkProgress();
                     return true;
                 }
-                ResetAutoWalkProgress();
-                return true;
             }
 
             float elapsed = Time.unscaledTime - _doorStandPhaseStart;
@@ -2325,16 +2373,28 @@ namespace DateEverythingAccess
                 return true;
             }
 
-            // DoorStandOpening: stand still and open it.
+            // DoorStandOpening: stand still and open it. A door stuck half open is shut first
+            // (the game's Interact toggles), then opened fully now that she is clear of it.
             if (elapsed >= DoorStandOpenTimeoutSeconds)
             {
                 _doorStandPhase = DoorStandNone;
+                _doorStandDoor = null;
                 if (Main.Log != null)
-                    Main.Log.LogInfo("SimpleNav door still closed after standing back: door=" + door.gameObject.name +
+                    Main.Log.LogInfo("SimpleNav door still not open after standing back: door=" + door.gameObject.name +
                         " player=" + FormatVector3(playerPos));
                 return false;
             }
             HoldForDoorStand();
+            if (stuckNow)
+            {
+                if (Time.unscaledTime - _doorStandLastToggle >= DoorStandToggleGapSeconds)
+                {
+                    _doorStandLastToggle = Time.unscaledTime;
+                    try { door.Interact(); } catch (Exception ex) { if (Main.Log != null) Main.Log.LogWarning("SimpleNav close stuck door threw: " + ex.Message); }
+                    _doorStandPhaseStart = Time.unscaledTime;   // give the close and reopen their time
+                }
+                return true;
+            }
             SimpleNavBridge.TryOpenDoorIfNeeded(door, playerPos);
             return true;
         }
@@ -4008,8 +4068,42 @@ namespace DateEverythingAccess
 
             _knownObjectSelectionIndex = 0;
             _isKnownObjectPickerOpen = true;
+            AcquirePickerInputBlock();
             SyncKnownObjectPickerKeyStates();
             AnnounceKnownObjectPickerTitleAndItem();
+        }
+
+        // While the tracking list is open, the game must not also take the arrow keys: they turned
+        // the camera, which moved the gaze onto other objects and the mod announced those over the
+        // list. Same input block the mod's settings menu uses.
+        private static InputModeHandle _pickerInputModeHandle;
+
+        private static void AcquirePickerInputBlock()
+        {
+            ReleasePickerInputBlock();
+            try
+            {
+                if (T17.Services.Services.InputService != null)
+                    _pickerInputModeHandle = T17.Services.Services.InputService.PushMode(IMirandaInputService.EInputMode.None,
+                        "DateEverythingAccess.ObjectPicker");
+            }
+            catch (Exception ex)
+            {
+                if (Main.Log != null) Main.Log.LogWarning("Object picker input block failed: " + ex.Message);
+            }
+            ApplyLookOnly(Vector3.zero);
+        }
+
+        private static void ReleasePickerInputBlock()
+        {
+            if (_pickerInputModeHandle == null)
+                return;
+            try { _pickerInputModeHandle.SafeDispose(); }
+            catch (Exception ex)
+            {
+                if (Main.Log != null) Main.Log.LogWarning("Object picker input release failed: " + ex.Message);
+            }
+            _pickerInputModeHandle = null;
         }
 
         private void CloseKnownObjectPicker(bool announceClosed)
@@ -4018,6 +4112,7 @@ namespace DateEverythingAccess
                 return;
 
             _isKnownObjectPickerOpen = false;
+            ReleasePickerInputBlock();
             _knownObjectTargets = null;
             _knownObjectView = null;
             _knownObjectSelectionIndex = -1;
@@ -5704,6 +5799,7 @@ namespace DateEverythingAccess
             _progressWaypointSet = false;
             _doorStandPhase = DoorStandNone;
             _doorStandAttempts = 0;
+            _doorStandDoor = null;
             LogCapsuleDimensionsOnce();
             _lastAutoWalkPosition = BetterPlayerControl.Instance != null ? BetterPlayerControl.Instance.transform.position : Vector3.zero;
             _lastAutoWalkProgressTime = Time.unscaledTime;
@@ -7172,15 +7268,16 @@ namespace DateEverythingAccess
 
         private void AnnounceDialogueIfNeeded()
         {
-            if (!ModConfig.ReadDialogueText)
-            {
-                _lastAnnouncedDialogue = null;
-                return;
-            }
-
             if (TalkingUI.Instance == null || !TalkingUI.Instance.open)
             {
                 _lastAnnouncedDialogue = null;
+                _unvoicedPendingLine = null;
+                return;
+            }
+
+            if (!ModConfig.ReadDialogueText)
+            {
+                AnnounceUnvoicedDialogueIfNeeded();
                 return;
             }
 
@@ -7200,6 +7297,61 @@ namespace DateEverythingAccess
 
             _lastAnnouncedDialogue = combined;
             ScreenReader.Say(combined, rememberAsRepeatable: true);
+        }
+
+        // UNVOICED LINES. With dialogue reading off (the cast is voiced), still read a line that
+        // the game "speaks" in text blips instead of a voice line: some characters in the Sassy
+        // Chap's content beep and boop. A new line is held briefly to hear what plays with it:
+        // a voice line means skip it, blips mean read it.
+        private string _unvoicedPendingLine;
+        private float _unvoicedPendingSince;
+        private const float UnvoicedDecideAfterSeconds = 0.35f;
+        private const float UnvoicedWaitForBlipSeconds = 2.5f;
+        private const float UnvoicedAudioSlackSeconds = 0.25f;
+
+        private void AnnounceUnvoicedDialogueIfNeeded()
+        {
+            if (!DialogueAudioWatch.BlipHooked)
+                return;
+            if (!TryGetCurrentDialogue(out string speakerName, out string dialogText))
+                return;
+            dialogText = NormalizeText(dialogText);
+            speakerName = NormalizeText(speakerName);
+            if (string.IsNullOrEmpty(dialogText))
+                return;
+            string combined = string.IsNullOrEmpty(speakerName) ? dialogText : speakerName + ". " + dialogText;
+            if (combined == _lastAnnouncedDialogue)
+                return;
+
+            float now = Time.unscaledTime;
+            if (!string.Equals(combined, _unvoicedPendingLine, StringComparison.Ordinal))
+            {
+                // A line that only grew (typing out) is the same line; keep its start time.
+                bool sameLineGrowing = _unvoicedPendingLine != null && combined.StartsWith(_unvoicedPendingLine, StringComparison.Ordinal);
+                _unvoicedPendingLine = combined;
+                if (!sameLineGrowing)
+                    _unvoicedPendingSince = now;
+                return;
+            }
+
+            float since = _unvoicedPendingSince - UnvoicedAudioSlackSeconds;
+            if (now - _unvoicedPendingSince < UnvoicedDecideAfterSeconds)
+                return;
+            if (DialogueAudioWatch.LastVoiceOverTime >= since)
+            {
+                _lastAnnouncedDialogue = combined;   // voiced: the player hears it already
+                return;
+            }
+            if (DialogueAudioWatch.LastBlipTime >= since)
+            {
+                _lastAnnouncedDialogue = combined;
+                if (Main.Log != null)
+                    Main.Log.LogInfo("Dialogue: reading an unvoiced (text-blip) line");
+                ScreenReader.Say(combined, rememberAsRepeatable: true);
+                return;
+            }
+            if (now - _unvoicedPendingSince >= UnvoicedWaitForBlipSeconds)
+                _lastAnnouncedDialogue = combined;   // nothing played with it; leave it to the game
         }
 
         private void AnnounceSelectionIfNeeded()
