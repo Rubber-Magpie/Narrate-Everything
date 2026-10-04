@@ -8918,7 +8918,7 @@ namespace DateEverythingAccess
             {
                 // Before the player presses Enter, focus sits on the field's "Proxy" wrapper (a
                 // button that CONTAINS the input field), not on the input field itself. Without this
-                // the generic reader spoke only the value ("Cricket") with no field name.
+                // the generic reader spoke only the value (the typed name) with no field name.
                 TMP_InputField inner = selectedObject.GetComponentInChildren<TMP_InputField>(true);
                 if (IsValidateQuestionsField(inner))
                 {
