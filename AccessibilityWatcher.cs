@@ -4924,6 +4924,9 @@ namespace DateEverythingAccess
                 return Loc.Get("room_downstairs_hall");
             if (string.Equals(container, "UpstairsHall", StringComparison.OrdinalIgnoreCase))
                 return Loc.Get("room_upstairs_hall");
+            // The piano room is one end of the living room, not a room of its own.
+            if (string.Equals(container, "PianoRoom", StringComparison.OrdinalIgnoreCase))
+                container = "LivingRoom";
             return FriendlyRoomName(container);
         }
 
@@ -7114,7 +7117,7 @@ namespace DateEverythingAccess
 
         private static string BuildNavigationTargetLabel(string zoneName, string currentZone)
         {
-            string normalizedZone = NormalizeIdentifierName(zoneName);
+            string normalizedZone = SpokenZoneName(zoneName);
             if (string.IsNullOrEmpty(normalizedZone))
                 normalizedZone = zoneName;
 
@@ -7285,6 +7288,9 @@ namespace DateEverythingAccess
             return IsWithinChatPanel(selectedObject, activeChatType, activePanelNameObject, secondaryPanelObject);
         }
 
+        private static bool _phoneMenuWasOpen;
+        private static string _lastScreenSummaryStatic;
+
         private void AnnounceScreenSummaryIfNeeded()
         {
             if (!ModConfig.ReadScreenText)
@@ -7293,6 +7299,15 @@ namespace DateEverythingAccess
                 return;
             }
 
+            bool phoneOpen = Singleton<PhoneManager>.Instance != null && Singleton<PhoneManager>.Instance.IsPhoneMenuOpened();
+            if (_phoneMenuWasOpen && !phoneOpen)
+                ScreenReader.SayCoalesced(Loc.Get("phone_menu_closed"));
+            if (!phoneOpen)
+                _phoneMenuWasOpen = false;
+            else if (!Singleton<PhoneManager>.Instance.IsPhoneAnimating())
+                _phoneMenuWasOpen = true;   // fully open (settled)
+
+            _lastScreenSummaryStatic = _lastScreenSummary;
             string summary = BuildScreenSummary();
             if (summary == _lastScreenSummary)
                 return;
@@ -9618,6 +9633,10 @@ namespace DateEverythingAccess
 
             if (Singleton<PhoneManager>.Instance != null && Singleton<PhoneManager>.Instance.IsPhoneMenuOpened())
             {
+                // While the phone is being put away it passes back through its home screen; don't
+                // announce "Phone menu" then (the closing is announced instead).
+                if (Singleton<PhoneManager>.Instance.IsPhoneAnimating() && _phoneMenuWasOpen)
+                    return _lastScreenSummaryStatic;
                 if (!Singleton<PhoneManager>.Instance.IsPhoneAppOpened())
                     return BuildPhoneHomeSummary();
                 return null;
@@ -10941,14 +10960,27 @@ namespace DateEverythingAccess
             if (zone == null)
                 return null;
 
-            // The game's camera zones for the laundry room are misnamed: the one called
-            // "laundry_room_closet" covers the main room by the closet door, and the closet itself
-            // (where Hoove is) is "laundry_room6". Say what the player is actually standing in.
-            if (string.Equals(zone.Name, "laundry_room6", StringComparison.OrdinalIgnoreCase))
+            return SpokenZoneName(zone.Name);
+        }
+
+        // A game camera zone as the player should hear it. The zones are numbered pieces of a
+        // room (living_room5, laundry_room2); the numbers mean nothing to the player, so they are
+        // dropped. The piano room is part of the living room. The laundry room's zones are
+        // misnamed: "laundry_room_closet" covers the main room by the closet door, and the closet
+        // itself (where Hoove is) is "laundry_room6".
+        private static string SpokenZoneName(string zoneName)
+        {
+            if (string.IsNullOrEmpty(zoneName))
+                return zoneName;
+            if (string.Equals(zoneName, "laundry_room6", StringComparison.OrdinalIgnoreCase))
                 return Loc.Get("room_laundry_closet");
-            if (string.Equals(zone.Name, "laundry_room_closet", StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(zoneName, "laundry_room_closet", StringComparison.OrdinalIgnoreCase))
                 return Loc.Get("room_laundry_room");
-            return NormalizeIdentifierName(zone.Name);
+            string z = Regex.Replace(zoneName.Trim(), @"[\s_]*\d+$", string.Empty);
+            if (z.StartsWith("piano_room", StringComparison.OrdinalIgnoreCase) ||
+                z.StartsWith("pianoroom", StringComparison.OrdinalIgnoreCase))
+                z = "living_room";
+            return NormalizeIdentifierName(z);
         }
 
         private static bool TryGetCurrentTutorialObjectiveText(out string objectiveText)

@@ -205,6 +205,7 @@ namespace DateEverythingAccess
             Add("loading_announcement", "Loading. {0}");
             Add("outcome_announcement", "Outcome. {0}");
             Add("phone_menu_summary", "Phone menu.");
+            Add("phone_menu_closed", "Phone menu closed.");
             Add("dateadex_voice_actor", "Voice actor: {0}");
             Add("dateadex_likes", "Likes: {0}");
             Add("dateadex_dislikes", "Dislikes: {0}");
@@ -445,6 +446,7 @@ namespace DateEverythingAccess
             AddJa("loading_announcement", "読み込み中。{0}");
             AddJa("outcome_announcement", "結果。{0}");
             AddJa("phone_menu_summary", "電話メニュー。");
+            AddJa("phone_menu_closed", "電話メニューを閉じました。");
             AddJa("dateadex_voice_actor", "声優: {0}");
             AddJa("dateadex_likes", "好き: {0}");
             AddJa("dateadex_dislikes", "嫌い: {0}");
