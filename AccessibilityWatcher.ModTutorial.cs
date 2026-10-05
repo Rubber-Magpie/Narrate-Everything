@@ -25,6 +25,9 @@ namespace DateEverythingAccess
             // False: only fires as the very next step after the one before it.
             public bool StandsAlone;
             public TutorialTrigger Trigger;
+            // Only once the tutorial is under way (some step already spoken), for triggers that
+            // could also be true on a later day: the work chats, meeting Betty.
+            public bool NeedsStarted;
         }
 
         private static readonly ModTutorialStep[] ModTutorialSteps =
@@ -33,8 +36,10 @@ namespace DateEverythingAccess
                 Trigger = w => InHouse() && ObjectiveHas("start your new job at your computer") },
             new ModTutorialStep { Key = "modtut_tracking_on", StandsAlone = false,
                 Trigger = w => ObjectTracker.IsTracking && ObjectiveHas("start your new job at your computer") },
-            new ModTutorialStep { Key = "modtut_tasks", StandsAlone = false,
-                Trigger = w => w.ModTutorialHeard("task") },
+            new ModTutorialStep { Key = "modtut_tasks", StandsAlone = true, NeedsStarted = true,
+                Trigger = w => WorkspaceChatState(out bool samEnded, out int customersEnded) && samEnded && customersEnded < 5 },
+            new ModTutorialStep { Key = "modtut_tasks_done", StandsAlone = true, NeedsStarted = true,
+                Trigger = w => WorkspaceChatState(out _, out int customersEnded) && customersEnded >= 5 },
             new ModTutorialStep { Key = "modtut_phone_messages", StandsAlone = true,
                 Trigger = w => InHouse() && ObjectiveHas("message on your phone") },
             new ModTutorialStep { Key = "modtut_leave_office", StandsAlone = true,
@@ -49,8 +54,8 @@ namespace DateEverythingAccess
                 Trigger = w => InHouse() && ObjectiveHas("locate the magnifying glass") },
             new ModTutorialStep { Key = "modtut_rumors", StandsAlone = true,
                 Trigger = w => InHouse() && ObjectiveHas("follow the clue in roomers") },
-            new ModTutorialStep { Key = "modtut_bed", StandsAlone = true,
-                Trigger = w => InHouse() && ObjectiveHas("charge the dateviators by going to sleep") },
+            new ModTutorialStep { Key = "modtut_bed", StandsAlone = true, NeedsStarted = true,
+                Trigger = w => InHouse() && _modTutorialMetBetty },
             new ModTutorialStep { Key = "modtut_morning", StandsAlone = false,
                 Trigger = w => w.ModTutorialMorningArrived() },
             new ModTutorialStep { Key = "modtut_finish", StandsAlone = false,
@@ -68,11 +73,7 @@ namespace DateEverythingAccess
         private float _modTutorialNextPoll;
         private string _modTutorialLastMessage;
         private bool _modTutorialSpeaking;
-        private bool _modTutorialHooked;
-        private readonly List<string> _modTutorialHeard = new List<string>();
-        private readonly object _modTutorialHeardLock = new object();
-        private string _modTutorialStartPhase;
-        private bool _modTutorialSawMorningLeave;
+        private string _modTutorialBedDay;
         private bool _modTutorialMessageWasOpen;
         private bool _hKeyWasDown;
 
@@ -87,47 +88,73 @@ namespace DateEverythingAccess
             return TryGetCurrentTutorialObjectiveText(out string text) && ContainsToken(text, phrase);
         }
 
-        // Everything the mod says passes through here, so a step can wait for the game's own text
-        // (as read out by the mod) without knowing which screen shows it. The tutorial's own lines
-        // are left out so "Press R to see your tasks" can't trigger itself.
-        private void OnModTutorialSpoken(string text)
+        private bool ModTutorialMorningArrived()
         {
-            if (_modTutorialSpeaking || string.IsNullOrEmpty(text)) return;
-            lock (_modTutorialHeardLock)
-            {
-                _modTutorialHeard.Add(text);
-                if (_modTutorialHeard.Count > 40) _modTutorialHeard.RemoveAt(0);
-            }
+            // A new day since the bed step, and back in the house (awake). The day of the week is
+            // the reliable signal: the time of day can flicker while the game puts the player to bed.
+            string day = CurrentDayName();
+            if (string.IsNullOrEmpty(day) || string.IsNullOrEmpty(_modTutorialBedDay)) return false;
+            return !string.Equals(day, _modTutorialBedDay, StringComparison.Ordinal) && InHouse();
         }
 
-        private bool ModTutorialHeard(string phrase)
-        {
-            lock (_modTutorialHeardLock)
-            {
-                for (int i = 0; i < _modTutorialHeard.Count; i++)
-                    if (_modTutorialHeard[i].IndexOf(phrase, StringComparison.OrdinalIgnoreCase) >= 0)
-                        return true;
-            }
-            return false;
-        }
-
-        private static string CurrentDayPhaseName()
+        private static string CurrentDayName()
         {
             if (Singleton<DayNightCycle>.Instance == null) return null;
-            try { return Singleton<DayNightCycle>.Instance.GetTime().ToString(); }
+            try { return Singleton<DayNightCycle>.Instance.GetDayOfWeek(); }
             catch { return null; }
         }
 
-        // Morning after the night's sleep: the phase has to move away from what it was when the bed
-        // step spoke, then land on morning.
-        private bool ModTutorialMorningArrived()
+        // Datables met (awakened) this session, from the meeting card. Betty is the bed.
+        private static bool _modTutorialMetBetty;
+
+        internal static void NoteModTutorialMeeting(string internalName)
         {
-            string phase = CurrentDayPhaseName();
-            if (string.IsNullOrEmpty(phase)) return false;
-            bool isMorning = phase.IndexOf("morn", StringComparison.OrdinalIgnoreCase) >= 0;
-            if (!string.Equals(phase, _modTutorialStartPhase, StringComparison.Ordinal) || !isMorning)
-                _modTutorialSawMorningLeave = true;
-            return _modTutorialSawMorningLeave && isMorning && InHouse();
+            if (string.Equals(internalName, "betty", StringComparison.OrdinalIgnoreCase))
+                _modTutorialMetBetty = true;
+        }
+
+        // The work computer's chats: whether Sam's first conversation has finished, and how many
+        // other (customer) conversations have. Read from the game's own "chat ended" flag.
+        private static System.Reflection.FieldInfo _chatEndedField;
+        private static bool _chatEndedFieldResolved;
+        private static string _lastWorkspaceStateLog;
+
+        private static bool WorkspaceChatState(out bool samEnded, out int customersEnded)
+        {
+            samEnded = false;
+            customersEnded = 0;
+            if (ChatMaster.Instance == null || ChatMaster.Instance.WorkspaceChats == null) return false;
+            if (!_chatEndedFieldResolved)
+            {
+                _chatEndedFieldResolved = true;
+                _chatEndedField = typeof(ParallelChat).GetField("chatEnded",
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public |
+                    System.Reflection.BindingFlags.NonPublic);
+                if (_chatEndedField == null && Main.Log != null)
+                    Main.Log.LogWarning("Mod tutorial: ParallelChat.chatEnded not found");
+            }
+            if (_chatEndedField == null) return false;
+            var sb = new System.Text.StringBuilder();
+            foreach (ParallelChat chat in ChatMaster.Instance.WorkspaceChats)
+            {
+                if (chat == null || chat.appMessage == null) continue;
+                bool ended = _chatEndedField.GetValue(chat) is bool b && b;
+                string name = (chat.appMessage.Name ?? string.Empty).Trim();
+                sb.Append(name).Append(ended ? "=ended " : "=open ");
+                if (!ended) continue;
+                if (name.Equals("Sam", StringComparison.OrdinalIgnoreCase) ||
+                    name.StartsWith("Sam ", StringComparison.OrdinalIgnoreCase))
+                    samEnded = true;
+                else
+                    customersEnded++;
+            }
+            string state = sb.ToString();
+            if (state != _lastWorkspaceStateLog && Main.Log != null)
+            {
+                _lastWorkspaceStateLog = state;
+                Main.Log.LogInfo("Mod tutorial: work chats " + state);
+            }
+            return true;
         }
 
         // The "glasses off mode" message: any game popup or dialog box that opens after the morning
@@ -145,11 +172,6 @@ namespace DateEverythingAccess
 
         private void UpdateModTutorial()
         {
-            if (!_modTutorialHooked)
-            {
-                _modTutorialHooked = true;
-                ScreenReader.Spoken += OnModTutorialSpoken;
-            }
             if (_modTutorialLastFired >= ModTutorialSteps.Length - 1) return;
             if (UnityEngine.Time.unscaledTime < _modTutorialNextPoll) return;
             _modTutorialNextPoll = UnityEngine.Time.unscaledTime + ModTutorialPollSeconds;
@@ -162,6 +184,7 @@ namespace DateEverythingAccess
                 {
                     ModTutorialStep step = ModTutorialSteps[i];
                     if (!step.StandsAlone && i != _modTutorialLastFired + 1) continue;
+                    if (step.NeedsStarted && _modTutorialLastFired < 0) continue;
                     if (step.Trigger(this)) { ready = i; break; }
                 }
             }
@@ -193,12 +216,8 @@ namespace DateEverythingAccess
             ModTutorialStep step = ModTutorialSteps[index];
             _modTutorialLastFired = index;
             _modTutorialPendingStep = -1;
-            lock (_modTutorialHeardLock) _modTutorialHeard.Clear();
             if (step.Key == "modtut_bed")
-            {
-                _modTutorialStartPhase = CurrentDayPhaseName();
-                _modTutorialSawMorningLeave = false;
-            }
+                _modTutorialBedDay = CurrentDayName();
             if (step.Key == "modtut_morning")
                 _modTutorialMessageWasOpen = TryBuildPopupAnnouncement(out _) || TryBuildUIDialogAnnouncement(out _);
 

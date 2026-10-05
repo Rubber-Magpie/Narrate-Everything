@@ -117,9 +117,6 @@ namespace DateEverythingAccess
         /// <summary>
         /// Speaks text through Tolk and optionally remembers it for replay.
         /// </summary>
-        /// <summary>Raised with every line passed to Say (the mod tutorial listens for game text).</summary>
-        public static event Action<string> Spoken;
-
         public static void Say(string text, bool interrupt = true, bool remember = true, bool rememberAsRepeatable = false)
         {
             if (string.IsNullOrWhiteSpace(text))
@@ -142,12 +139,6 @@ namespace DateEverythingAccess
             }
 
             DebugLogger.LogScreenReader(text);
-
-            Action<string> spoken = Spoken;
-            if (spoken != null)
-            {
-                try { spoken(text); } catch { }
-            }
 
             if (!_available)
                 return;

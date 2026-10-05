@@ -254,7 +254,8 @@ namespace DateEverythingAccess
             Add("modtut_none", "No tutorial message yet.");
             Add("modtut_start", "This mod tutorial will run alongside the game's tutorial and get you acclimated to the mod. You can repeat the last tutorial message at any time by pressing H. To track the game's tutorial objectives, you can press control + O. Try it now.");
             Add("modtut_tracking_on", "Good. Now, you can either follow the tone you hear by walking with W, A, S and D, but if you get stuck, try pressing alt+O to autowalk. In any case, you should hear, \"monitor.\" Once you're focused on it, press Z to interact with it.");
-            Add("modtut_tasks", "Press R to see your tasks. When you've gone through them all, press Q to return to the main work screen.");
+            Add("modtut_tasks", "Press R to see your tasks.");
+            Add("modtut_tasks_done", "That's all your tasks. Press Q to return to the main work screen.");
             Add("modtut_phone_messages", "Press escape to access your phone. Your messages can be found in your Thiscord app. Once you've gone through them, press backspace a few times to close out and put it away.");
             Add("modtut_leave_office", "Navigate out of your office the same way you did with the monitor. That's control+O to track, and alt+O if you'd like to autowalk.");
             Add("modtut_package", "You got a package! How exciting! Navigate to the mysterious box as you do and press Z to interact.");

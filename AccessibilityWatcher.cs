@@ -853,6 +853,7 @@ namespace DateEverythingAccess
         /// </summary>
         internal static void RequestCardPoseAnnouncement(string internalName, E_General_Poses pose, E_Facial_Expressions expression, bool allowNeutralFallback)
         {
+            NoteModTutorialMeeting(internalName);
             bool found = CardPoseDescriptions.TryGet(internalName, pose, expression, allowNeutralFallback, out string description);
             if (Main.Log != null)
             {
@@ -7448,6 +7449,10 @@ namespace DateEverythingAccess
         }
 
         private static bool _phoneMenuWasOpen;
+        // When "Phone closed" was last said. The game reports the phone open again for a moment
+        // while it finishes putting it away, which used to say "Phone menu" right after "closed".
+        private static float _phoneClosedAt = -100f;
+        private const float PhoneCloseSettleSeconds = 2f;
         private static string _lastScreenSummaryStatic;
 
         private void AnnounceScreenSummaryIfNeeded()
@@ -7460,11 +7465,15 @@ namespace DateEverythingAccess
 
             bool phoneOpen = Singleton<PhoneManager>.Instance != null && Singleton<PhoneManager>.Instance.IsPhoneMenuOpened();
             if (_phoneMenuWasOpen && !phoneOpen)
+            {
                 ScreenReader.SayCoalesced(Loc.Get("phone_menu_closed"));
+                _phoneClosedAt = Time.unscaledTime;
+            }
             if (!phoneOpen)
                 _phoneMenuWasOpen = false;
-            else if (!Singleton<PhoneManager>.Instance.IsPhoneAnimating())
-                _phoneMenuWasOpen = true;   // fully open (settled)
+            else if (!Singleton<PhoneManager>.Instance.IsPhoneAnimating() &&
+                     Time.unscaledTime - _phoneClosedAt >= PhoneCloseSettleSeconds)
+                _phoneMenuWasOpen = true;   // fully open (settled), and not the flicker after closing
 
             _lastScreenSummaryStatic = _lastScreenSummary;
             string summary = BuildScreenSummary();
@@ -9803,6 +9812,9 @@ namespace DateEverythingAccess
                 // announce "Phone menu" then (the closing is announced instead).
                 if (Singleton<PhoneManager>.Instance.IsPhoneAnimating() && _phoneMenuWasOpen)
                     return _lastScreenSummaryStatic;
+                if (Time.unscaledTime - _phoneClosedAt < PhoneCloseSettleSeconds &&
+                    !Singleton<PhoneManager>.Instance.IsPhoneAppOpened())
+                    return null;
                 if (!Singleton<PhoneManager>.Instance.IsPhoneAppOpened())
                     return BuildPhoneHomeSummary();
                 return null;
@@ -10964,7 +10976,13 @@ namespace DateEverythingAccess
         private static bool WasChoiceKeyPressed(KeyCode keyCode, int virtualKey, ref bool wasDown)
         {
             bool isDown = (GetAsyncKeyState(virtualKey) & 0x8000) != 0;
-            bool pressed = Input.GetKeyDown(keyCode) || (isDown && !wasDown);
+            // Two views of the same key: the live key state (seen the moment it goes down) and
+            // Unity's key-down event (which can arrive a frame later). Counting either one alone
+            // is right; counting both counted one press twice, and if a modifier had been let go
+            // in between, the second count did something else: Alt+O started auto-walk and then
+            // opened the objects list. Unity's event now only counts when the live state hadn't
+            // already seen this press (a tap too quick for it).
+            bool pressed = (isDown && !wasDown) || (!wasDown && Input.GetKeyDown(keyCode));
             wasDown = isDown;
             return pressed;
         }
