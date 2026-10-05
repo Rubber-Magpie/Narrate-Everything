@@ -252,7 +252,7 @@ namespace DateEverythingAccess
             Add("chat_options", "Options. {0}");
             // Mod tutorial (see AccessibilityWatcher.ModTutorial.cs). H repeats the latest one.
             Add("modtut_none", "No tutorial message yet.");
-            Add("modtut_start", "This mod tutorial will run alongside the game's and get you acclimated to the mod. To track the game's tutorial objectives, you can press control + O. Try it now.");
+            Add("modtut_start", "This mod tutorial will run alongside the game's and get you acclimated to the mod. You can repeat the last tutorial message at any time by pressing H. To track the game's tutorial objectives, you can press control + O. Try it now.");
             Add("modtut_tracking_on", "Good. Now, you can either follow the tone you hear by walking with W, A, S and D, but if you get stuck, try pressing alt+O to autowalk. In any case, you should hear, \"monitor.\" Once you're focused on it, press Z to interact with it.");
             Add("modtut_tasks", "Press R to see your tasks.");
             Add("modtut_tasks_done", "That's all your tasks. Press Q to return to the main work screen.");
