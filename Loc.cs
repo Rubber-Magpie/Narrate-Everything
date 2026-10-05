@@ -252,18 +252,18 @@ namespace DateEverythingAccess
             Add("chat_options", "Options. {0}");
             // Mod tutorial (see AccessibilityWatcher.ModTutorial.cs). H repeats the latest one.
             Add("modtut_none", "No tutorial message yet.");
-            Add("modtut_start", "This mod tutorial will run alongside the game's tutorial and get you acclimated to the mod. You can repeat the last tutorial message at any time by pressing H. To track the game's tutorial objectives, you can press control + O. Try it now.");
+            Add("modtut_start", "This mod tutorial will run alongside the game's and get you acclimated to the mod. To track the game's tutorial objectives, you can press control + O. Try it now.");
             Add("modtut_tracking_on", "Good. Now, you can either follow the tone you hear by walking with W, A, S and D, but if you get stuck, try pressing alt+O to autowalk. In any case, you should hear, \"monitor.\" Once you're focused on it, press Z to interact with it.");
             Add("modtut_tasks", "Press R to see your tasks.");
             Add("modtut_tasks_done", "That's all your tasks. Press Q to return to the main work screen.");
             Add("modtut_phone_messages", "Press escape to access your phone. Your messages can be found in your Thiscord app. Once you've gone through them, press backspace a few times to close out and put it away.");
             Add("modtut_leave_office", "Navigate out of your office the same way you did with the monitor. That's control+O to track, and alt+O if you'd like to autowalk.");
             Add("modtut_package", "You got a package! How exciting! Navigate to the mysterious box as you do and press Z to interact.");
-            Add("modtut_dorian", "What an exciting turn of events. You're close to the door, so try using your arrow keys to find it. The left and right arrows will turn you, while the up and down arrows will move your gaze up and down respectively. It helps to tap the arrows if you're close by, as the camera pans very quickly if you hold them down. If you get stuck, just track as you normally would, then hold space to awaken the door once you're focused on it.");
+            Add("modtut_dorian", "What an unexpected turn of events! You're close to the door, so try using your arrow keys to find it. The left and right arrows will turn you, while the up and down arrows move your gaze up and down respectively. It helps to tap the arrows if you're close by, as the camera pans very quickly if you hold them down. If you get stuck, just track as you normally would, then hold space to awaken the door once you're focused on it.");
             Add("modtut_awaken_phone", "Press escape to take out your phone, then hold space to awaken it.");
             Add("modtut_magnifying_glass", "You know the drill. Find that magnifying glass. Go, run, date!");
             Add("modtut_rumors", "Check out the rumors app on your phone. Remember, backspace or escape will close it again. Proceed as normal when done.");
-            Add("modtut_bed", "Time for bed! Press tab to take off the dateviators, then press Z to interact with your bed. Z will allow you to interact with objects, X will examine them.");
+            Add("modtut_bed", "You're getting sleepy, and so are your dateviators. Press tab to take off the dateviators, then press z to interact with your bed. Z will allow you to interact with objects, x will examine them.");
             Add("modtut_morning", "Good morning! Put your glasses back on.");
             Add("modtut_finish", "Thus concludes the mod tutorial. Remember that any time you interact with or just examine an object, you can track it from the object list. Pull it up with O, then select it from the list. For now, you can only track the doors, but the more you find, the more you can track. Remember, you can follow the tones, or autowalk with alt+O. From now on, control+O will allow you to track some of the trickier datables when relevant. Check the readme for a list of the objects this rule applies to. You can press F-1 at any time for accessibility help. Good luck, and happy dating!");
             Add("navigation_no_objective", "No current objective.");
