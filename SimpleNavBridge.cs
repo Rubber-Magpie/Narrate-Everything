@@ -690,6 +690,22 @@ namespace DateEverythingAccess
         // Returns the angular distance (deg) between a swinging door's live rotation and its
         // authored startRot (closed orientation). Returns -1 if reflection failed OR the portal
         // is a SLIDER (sliders translate, not rotate — no swing delta concept).
+        // The shut orientation the game recorded for this swing door (Door.startRot, Euler).
+        public static bool TryGetDoorShutRotation(DoorPortal portal, out Quaternion shut)
+        {
+            shut = Quaternion.identity;
+            if (portal == null || !portal.IsSwing || portal.SwingDoor == null) return false;
+            FieldInfo fi = GetDoorStartRotField();
+            if (fi == null) return false;
+            try
+            {
+                if (!(fi.GetValue(portal.SwingDoor) is Vector3 startRot)) return false;
+                shut = Quaternion.Euler(startRot);
+                return true;
+            }
+            catch { return false; }
+        }
+
         private static float ReadDoorVisualRotationDelta(DoorPortal portal)
         {
             if (portal == null || !portal.IsSwing) return -1f;

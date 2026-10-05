@@ -2318,6 +2318,94 @@ namespace DateEverythingAccess
             return c != null && SimpleNavPlanner.IsSliderStillAcrossItsOpening(door.gameObject.name, c.bounds);
         }
 
+        // The ground this swing door's leaf passes through as it opens, from the live door: the
+        // hinge is the door's own pivot, the leaf is its collider, and the open side comes from
+        // where the bake has the leaf lying fully open. Invalid for sliders or when anything is
+        // missing, which leaves the older shut-and-open-leaf checks in charge.
+        private static readonly HashSet<string> _doorSweepLogged = new HashSet<string>(StringComparer.Ordinal);
+
+        private static SimpleNavPlanner.DoorSweep GetDoorSweep(DoorPortal door)
+        {
+            var sw = default(SimpleNavPlanner.DoorSweep);
+            try
+            {
+                if (door == null || !door.IsSwing || door.SwingDoor == null) return sw;
+                Transform t = door.SwingDoor.transform;
+                Collider col = door.GetComponent();
+                if (t == null || col == null) return sw;
+                Vector3 hinge = t.position;
+
+                Vector3 mid;
+                float length;
+                BoxCollider box = col as BoxCollider;
+                if (box != null)
+                {
+                    mid = box.transform.TransformPoint(box.center);
+                    length = 0f;
+                    Vector3 half = box.size * 0.5f;
+                    for (int i = 0; i < 8; i++)
+                    {
+                        Vector3 corner = box.center + new Vector3(
+                            (i & 1) == 0 ? -half.x : half.x,
+                            (i & 2) == 0 ? -half.y : half.y,
+                            (i & 4) == 0 ? -half.z : half.z);
+                        Vector3 w = box.transform.TransformPoint(corner);
+                        float d = new Vector2(w.x - hinge.x, w.z - hinge.z).magnitude;
+                        if (d > length) length = d;
+                    }
+                }
+                else
+                {
+                    mid = col.bounds.center;
+                    length = 2f * new Vector2(mid.x - hinge.x, mid.z - hinge.z).magnitude;
+                }
+                Vector3 leafNow = new Vector3(mid.x - hinge.x, 0f, mid.z - hinge.z);
+                if (length < 0.4f || length > 6f || leafNow.sqrMagnitude < 0.01f) return sw;
+
+                // Turn the leaf's current direction back to where it lies shut.
+                Vector3 shutDir = leafNow;
+                if (SimpleNavBridge.TryGetDoorShutRotation(door, out Quaternion shutRot))
+                {
+                    shutDir = (shutRot * Quaternion.Inverse(t.rotation)) * leafNow;
+                    shutDir.y = 0f;
+                }
+                if (shutDir.sqrMagnitude < 0.01f) return sw;
+                shutDir.Normalize();
+
+                if (!SimpleNavPlanner.TryGetDoorOpenLeafCentroid(door.gameObject.name, hinge.y, out Vector3 openC))
+                    return sw;
+                Vector3 openDir = new Vector3(openC.x - hinge.x, 0f, openC.z - hinge.z);
+                if (openDir.sqrMagnitude < 0.01f) return sw;
+                float sweepDeg = Vector3.SignedAngle(shutDir, openDir.normalized, Vector3.up);
+                if (Mathf.Abs(sweepDeg) < 20f || Mathf.Abs(sweepDeg) > 150f) return sw;
+
+                sw.Valid = true;
+                sw.Hinge = hinge;
+                sw.Radius = length;
+                sw.ShutDir = shutDir;
+                sw.SweepDeg = sweepDeg;
+                if (_doorSweepLogged.Add(door.gameObject.name) && Main.Log != null)
+                    Main.Log.LogInfo("SimpleNav door swing area door=" + door.gameObject.name +
+                        " hinge=(" + hinge.x.ToString("F2") + ", " + hinge.z.ToString("F2") + ")" +
+                        " leaf=" + length.ToString("F2") + "m shutDir=(" + shutDir.x.ToString("F2") + ", " +
+                        shutDir.z.ToString("F2") + ") sweep=" + sweepDeg.ToString("F0") + " deg");
+            }
+            catch (Exception ex)
+            {
+                if (Main.Log != null) Main.Log.LogWarning("SimpleNav door swing area failed: " + ex.Message);
+                sw.Valid = false;
+            }
+            return sw;
+        }
+
+        private static bool IsInDoorSweepOrSwing(DoorPortal door, Vector3 playerPos)
+        {
+            SimpleNavPlanner.DoorSweep sw = GetDoorSweep(door);
+            if (sw.Valid)
+                return SimpleNavPlanner.InSweep(sw, playerPos.x, playerPos.z, SimpleNavPlanner.DoorSweepBodyM);
+            return SimpleNavPlanner.IsInDoorSwing(door.gameObject.name, playerPos);
+        }
+
         // Start stand-back-and-open for `door`. `why` is for the log.
         private bool BeginDoorStand(DoorPortal door, Transform playerTransform, Vector3 playerPos, string why)
         {
@@ -2325,7 +2413,7 @@ namespace DateEverythingAccess
                 _doorStandAttempts >= DoorStandMaxAttempts)
                 return false;
             string doorName = door.gameObject.name;
-            if (!SimpleNavPlanner.TryGetDoorOpeningStandpoint(doorName, playerPos, out Vector3 stand))
+            if (!SimpleNavPlanner.TryGetDoorOpeningStandpoint(doorName, playerPos, GetDoorSweep(door), out Vector3 stand))
             {
                 Collider doorCol = door.GetComponent();
                 Vector3 onDoor = doorCol != null ? doorCol.ClosestPointOnBounds(playerPos) : door.gameObject.transform.position;
@@ -2371,7 +2459,7 @@ namespace DateEverythingAccess
                 // bedroom, the door swung into her and she stalled against it).
                 bool inSwing = !door.open && !SimpleNavBridge.IsDoorMoving(door) &&
                     GetFlatDistance(playerPos, door.gameObject.transform.position) <= DoorStandSwingCheckM &&
-                    SimpleNavPlanner.IsInDoorSwing(doorName, playerPos);
+                    IsInDoorSweepOrSwing(door, playerPos);
                 bool stuck = IsDoorStuck(door) &&
                     GetFlatDistance(playerPos, door.gameObject.transform.position) <= DoorStandSwingCheckM;
                 string why = inSwing ? "would swing into her"

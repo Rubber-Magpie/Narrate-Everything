@@ -3785,8 +3785,75 @@ namespace DateEverythingAccess
         private const int DoorShutLeafClearCells = 4;   // ~0.3 m gap to the shut door for the real body
         private const int DoorSwingClearCells = 3;      // ~0.2 m gap to where it swings
         private const float DoorStandMaxDistM = 4.0f;
+        // Room for a stand clear of the whole swing of a big door (the office door's leaf is about
+        // three metres long, so the clear spots are further away than for an ordinary door).
+        private const float DoorStandMaxDistWithSweepM = 6.0f;
+        // Body allowance around the swept area: the player's capsule plus a little air.
+        public const float DoorSweepBodyM = 0.55f;
+
+        // The whole area a swing door's leaf passes through while it opens: a pie slice around
+        // the hinge from where the leaf lies shut to where it lies open. The bake only knows the
+        // shut and fully-open leaf positions, not the ground in between; a spot clear of both can
+        // still be in the leaf's way. Leaving the office in the tutorial she stepped back to such
+        // a spot, the leaf hit her a quarter of the way open and stopped, so the mod shut it to
+        // try again, and it hit her again. Built from the live door by the caller.
+        public struct DoorSweep
+        {
+            public bool Valid;
+            public Vector3 Hinge;      // y ignored
+            public float Radius;       // leaf length, hinge to tip
+            public Vector3 ShutDir;    // flat, normalised: hinge toward the shut leaf
+            public float SweepDeg;     // signed angle (about +Y) from ShutDir to the open leaf
+        }
+
+        public static bool InSweep(DoorSweep sw, float x, float z, float bodyM)
+        {
+            if (!sw.Valid) return false;
+            Vector3 v = new Vector3(x - sw.Hinge.x, 0f, z - sw.Hinge.z);
+            float r = v.magnitude;
+            if (r > sw.Radius + bodyM) return false;
+            if (r <= bodyM + 0.1f) return true;
+            float a = Vector3.SignedAngle(sw.ShutDir, v, Vector3.up);
+            float margin = Mathf.Asin(Mathf.Clamp01(bodyM / r)) * Mathf.Rad2Deg;
+            float sweep = Mathf.Abs(sw.SweepDeg);
+            if (sw.SweepDeg < 0f) a = -a;
+            return a >= -margin && a <= sweep + margin;
+        }
+
+        // Centre of where this door's leaf lies when fully open, from the bake.
+        public static bool TryGetDoorOpenLeafCentroid(string doorName, float y, out Vector3 centroid)
+        {
+            centroid = default;
+            if (string.IsNullOrEmpty(doorName) || !EnsureLoaded()) return false;
+            Floor floor = NearestFloorByY(y);
+            if (floor == null || !floor.DoorBlockedByName.TryGetValue(doorName, out HashSet<long> cells) ||
+                cells == null || cells.Count == 0)
+                return false;
+            double sx = 0, sz = 0;
+            foreach (long p in cells)
+            {
+                Vector2 w = floor.CellToWorld((int)(p >> 32), (int)(uint)p);
+                sx += w.x; sz += w.y;
+            }
+            centroid = new Vector3((float)(sx / cells.Count), y, (float)(sz / cells.Count));
+            return true;
+        }
 
         public static bool TryGetDoorOpeningStandpoint(string doorName, Vector3 playerPos, out Vector3 stand)
+        {
+            return TryGetDoorOpeningStandpoint(doorName, playerPos, default(DoorSweep), out stand);
+        }
+
+        public static bool TryGetDoorOpeningStandpoint(string doorName, Vector3 playerPos, DoorSweep sweep, out Vector3 stand)
+        {
+            // Clear of the whole swing first; if no such spot is in reach, the old rule (clear of
+            // the shut and open leaf only) still beats having nowhere to stand.
+            if (sweep.Valid && TryGetDoorOpeningStandpointCore(doorName, playerPos, sweep, out stand))
+                return true;
+            return TryGetDoorOpeningStandpointCore(doorName, playerPos, default(DoorSweep), out stand);
+        }
+
+        private static bool TryGetDoorOpeningStandpointCore(string doorName, Vector3 playerPos, DoorSweep sweep, out Vector3 stand)
         {
             stand = default;
             if (string.IsNullOrEmpty(doorName) || !EnsureLoaded()) return false;
@@ -3812,7 +3879,7 @@ namespace DateEverythingAccess
                     if (!floor.Navigable(ix, iz)) continue;
                     Vector2 w = floor.CellToWorld(ix, iz);
                     float d = Vector2.Distance(w, new Vector2(playerPos.x, playerPos.z));
-                    if (d > DoorStandMaxDistM || d >= bestD) continue;
+                    if (d > (sweep.Valid ? DoorStandMaxDistWithSweepM : DoorStandMaxDistM) || d >= bestD) continue;
                     if (haveFrame)
                     {
                         float depth = (w.x - c.x) * through.x + (w.y - c.z) * through.z;
@@ -3820,6 +3887,7 @@ namespace DateEverythingAccess
                     }
                     if (CellNearAny(ix, iz, shut, DoorShutLeafClearCells)) continue;
                     if (CellNearAny(ix, iz, swing, DoorSwingClearCells)) continue;
+                    if (sweep.Valid && InSweep(sweep, w.x, w.y, DoorSweepBodyM)) continue;
                     if (tier == 0)
                     {
                         bool deep = true;
@@ -3843,7 +3911,7 @@ namespace DateEverythingAccess
                     if (Main.Log != null)
                         Main.Log.LogInfo("SimpleNavPlanner door stand-to-open door=" + doorName +
                             " at (" + stand.x.ToString("F2") + ", " + stand.z.ToString("F2") + ") dist=" +
-                            bestD.ToString("F2") + " tier=" + tier);
+                            bestD.ToString("F2") + " tier=" + tier + " clearOfSwing=" + sweep.Valid);
                     return true;
                 }
             }
