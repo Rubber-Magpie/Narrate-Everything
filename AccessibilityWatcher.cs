@@ -952,6 +952,7 @@ namespace DateEverythingAccess
             // while a text field or the settings menu is focused. Sampled every frame for the same
             // fast-tap reason as the section stepper.
             PollAccessibilityShortcutKeys();
+            UpdateModTutorial();
             UpdateAimCoach();
 
             bool isSettingsMenuOpen = ModConfig.IsMenuOpen;
@@ -8049,6 +8050,7 @@ namespace DateEverythingAccess
             bool lookPressed = WasChoiceKeyPressed(KeyCode.L, VkL, ref _lookAroundKeyWasDown);
             bool objectPressed = WasChoiceKeyPressed(KeyCode.O, VkO, ref _objectTrackerKeyWasDown);
             bool repeatPressed = WasChoiceKeyPressed(KeyCode.BackQuote, VkBacktick, ref _repeatLastKeyWasDown);
+            bool tutorialRepeatPressed = WasChoiceKeyPressed(KeyCode.H, 0x48, ref _hKeyWasDown);
 
             // Never act on these while typing or inside the settings menu; edge state above already advanced.
             if (ModConfig.IsMenuOpen || IsTextInputFocused())
@@ -8072,6 +8074,12 @@ namespace DateEverythingAccess
             // hotkeys (e.g. Ctrl+F1 settings) and don't also fire a bare-key action.
             if (ctrl)
                 return;
+
+            if (tutorialRepeatPressed && !shift && !alt)
+            {
+                HandleModTutorialRepeat(true);
+                return;
+            }
 
             if (lookPressed && !shift && !alt)
             {

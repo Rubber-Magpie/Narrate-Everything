@@ -60,6 +60,12 @@ Known objects list (O)
 - The crawlspace trapdoor and ladder stay hidden until you find them.
 - The game camera no longer moves while the list is open.
 
+Mod tutorial
+- When you start a new game, the mod talks you through its keys alongside
+  the game's own tutorial, step by step: tracking, auto-walk, the phone,
+  finding the door, going to bed and more. Press H to hear the latest
+  tutorial message again.
+
 Other
 - The laundry closet is announced as "Laundry closet".
 - Characters who speak in beeps instead of a voice line (in the Sassy Chap's
@@ -69,6 +75,7 @@ CONTROLS
 ========
 F1 - Help
 ` (backtick) - Repeat the last spoken line
+H - Repeat the last mod tutorial message
 L - Report the current room and objects relative to the direction you face
 O - Open the known objects list
 Ctrl+O - Track the current objective
