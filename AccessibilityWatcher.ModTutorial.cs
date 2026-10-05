@@ -37,9 +37,9 @@ namespace DateEverythingAccess
             new ModTutorialStep { Key = "modtut_tracking_on", StandsAlone = false,
                 Trigger = w => ObjectTracker.IsTracking && ObjectiveHas("start your new job at your computer") },
             new ModTutorialStep { Key = "modtut_tasks", StandsAlone = true, NeedsStarted = true,
-                Trigger = w => WorkspaceChatState(out bool samEnded, out int customersEnded) && samEnded && customersEnded < 5 },
-            new ModTutorialStep { Key = "modtut_tasks_done", StandsAlone = true, NeedsStarted = true,
-                Trigger = w => WorkspaceChatState(out _, out int customersEnded) && customersEnded >= 5 },
+                Trigger = w => WorkspaceChatState(out bool samEnded) && samEnded },
+            new ModTutorialStep { Key = "modtut_tasks_done", StandsAlone = false,
+                Trigger = w => CustomerChatsFinished() >= 5 },
             new ModTutorialStep { Key = "modtut_phone_messages", StandsAlone = true,
                 Trigger = w => InHouse() && ObjectiveHas("message on your phone") },
             new ModTutorialStep { Key = "modtut_leave_office", StandsAlone = true,
@@ -113,19 +113,17 @@ namespace DateEverythingAccess
                 _modTutorialMetBetty = true;
         }
 
-        // The work computer's chats: whether Sam's first conversation has finished, and how many
-        // other (customer) conversations have finished so far. Read from the game's own "chat ended" flag.
+        // The work computer's chats (Sam, Tom, David Most): whether Sam's first conversation has
+        // finished. Read from the game's own "chat ended" flag.
         private static System.Reflection.FieldInfo _chatEndedField;
         private static bool _chatEndedFieldResolved;
         private static string _lastWorkspaceStateLog;
         private static readonly Dictionary<string, bool> _workChatEnded = new Dictionary<string, bool>(StringComparer.Ordinal);
         private static int _samChatsEnded;
-        private static int _customerChatsEnded;
 
-        private static bool WorkspaceChatState(out bool samEnded, out int customersEnded)
+        private static bool WorkspaceChatState(out bool samEnded)
         {
             samEnded = false;
-            customersEnded = 0;
             if (ChatMaster.Instance == null || ChatMaster.Instance.WorkspaceChats == null) return false;
             if (!_chatEndedFieldResolved)
             {
@@ -137,8 +135,6 @@ namespace DateEverythingAccess
                     Main.Log.LogWarning("Mod tutorial: ParallelChat.chatEnded not found");
             }
             if (_chatEndedField == null) return false;
-            // Customers come back with new conversations (David Most and Tom each had several), so
-            // count every conversation that finishes, not the number of customers.
             var sb = new System.Text.StringBuilder();
             foreach (ParallelChat chat in ChatMaster.Instance.WorkspaceChats)
             {
@@ -150,22 +146,46 @@ namespace DateEverythingAccess
                     name.StartsWith("Sam ", StringComparison.OrdinalIgnoreCase);
                 bool wasEnded = _workChatEnded.TryGetValue(name, out bool prev) && prev;
                 _workChatEnded[name] = ended;
-                if (ended && !wasEnded)
-                {
-                    if (isSam) _samChatsEnded++;
-                    else _customerChatsEnded++;
-                }
+                if (ended && !wasEnded && isSam) _samChatsEnded++;
             }
             samEnded = _samChatsEnded > 0;
-            customersEnded = _customerChatsEnded;
             string state = sb.ToString();
             if (state != _lastWorkspaceStateLog && Main.Log != null)
             {
                 _lastWorkspaceStateLog = state;
-                Main.Log.LogInfo("Mod tutorial: work chats " + state + "| finished: Sam " + _samChatsEnded +
-                    ", customers " + _customerChatsEnded);
+                Main.Log.LogInfo("Mod tutorial: work chats " + state + "| Sam finished " + _samChatsEnded);
             }
             return true;
+        }
+
+        // The customers: their own list on the work screen (the game calls it Canopy), opened with
+        // R. Every conversation there that finishes counts; after the fifth, the Q tip.
+        private static readonly Dictionary<ParallelChat, bool> _customerChatEnded = new Dictionary<ParallelChat, bool>();
+        private static int _customerListChatsEnded;
+        private static string _lastCustomerStateLog;
+
+        private static int CustomerChatsFinished()
+        {
+            if (ChatMaster.Instance == null || ChatMaster.Instance.CanopyChats == null || _chatEndedField == null)
+                return _customerListChatsEnded;
+            var sb = new System.Text.StringBuilder();
+            foreach (ParallelChat chat in ChatMaster.Instance.CanopyChats)
+            {
+                if (chat == null) continue;
+                bool ended = _chatEndedField.GetValue(chat) is bool b && b;
+                bool wasEnded = _customerChatEnded.TryGetValue(chat, out bool prev) && prev;
+                _customerChatEnded[chat] = ended;
+                if (ended && !wasEnded) _customerListChatsEnded++;
+                string name = chat.appMessage != null ? (chat.appMessage.Name ?? string.Empty).Trim() : "?";
+                sb.Append(name).Append(ended ? "=ended " : "=open ");
+            }
+            string state = sb.ToString();
+            if (state != _lastCustomerStateLog && Main.Log != null)
+            {
+                _lastCustomerStateLog = state;
+                Main.Log.LogInfo("Mod tutorial: customer chats " + state + "| finished " + _customerListChatsEnded);
+            }
+            return _customerListChatsEnded;
         }
 
         // The "glasses off mode" message: any game popup or dialog box that opens after the morning
