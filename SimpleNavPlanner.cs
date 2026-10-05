@@ -3790,6 +3790,9 @@ namespace DateEverythingAccess
         private const float DoorStandMaxDistWithSweepM = 6.0f;
         // Body allowance around the swept area: the player's capsule plus a little air.
         public const float DoorSweepBodyM = 0.55f;
+        // Furthest from the hinge a stand may be: comfortably inside the game's interaction radius
+        // for doors (7.5 m for the office door) measured to the nearest part of the leaf.
+        private const float DoorSweepReachM = 6.0f;
 
         // The whole area a swing door's leaf passes through while it opens: a pie slice around
         // the hinge from where the leaf lies shut to where it lies open. The bake only knows the
@@ -3868,12 +3871,32 @@ namespace DateEverythingAccess
             var fromCell = new NodeKey(floor.Label, px, pz);
             bool fromOk = floor.Navigable(px, pz);
 
+            // With the swing known, any floor near enough to reach the door will do: the mod opens
+            // it directly, so the bake's "operable from" area (spots where the game's own aim
+            // would pick the door) doesn't limit it, and in a small room like the office every
+            // such spot was inside the swing. Without it, the operable area as before.
+            IEnumerable<long> candidates = operable;
+            if (sweep.Valid)
+            {
+                var near = new List<long>();
+                int reach = Mathf.CeilToInt(DoorStandMaxDistWithSweepM / floor.CellSize);
+                for (int ix = px - reach; ix <= px + reach; ix++)
+                    for (int iz = pz - reach; iz <= pz + reach; iz++)
+                    {
+                        if (!floor.InBounds(ix, iz)) continue;
+                        Vector2 cw = floor.CellToWorld(ix, iz);
+                        if (new Vector2(cw.x - sweep.Hinge.x, cw.y - sweep.Hinge.z).magnitude > DoorSweepReachM) continue;
+                        near.Add(Floor.PackCell(ix, iz));
+                    }
+                candidates = near;
+            }
+
             // Tiers: with room all round inside the operable area first, then any operable cell.
-            for (int tier = 0; tier < 2; tier++)
+            for (int tier = sweep.Valid ? 1 : 0; tier < 2; tier++)
             {
                 float bestD = float.MaxValue;
                 bool found = false;
-                foreach (long packed in operable)
+                foreach (long packed in candidates)
                 {
                     int ix = (int)(packed >> 32), iz = (int)(uint)packed;
                     if (!floor.Navigable(ix, iz)) continue;
