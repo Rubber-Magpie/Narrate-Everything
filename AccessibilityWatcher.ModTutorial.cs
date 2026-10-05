@@ -114,10 +114,13 @@ namespace DateEverythingAccess
         }
 
         // The work computer's chats: whether Sam's first conversation has finished, and how many
-        // other (customer) conversations have. Read from the game's own "chat ended" flag.
+        // other (customer) conversations have finished so far. Read from the game's own "chat ended" flag.
         private static System.Reflection.FieldInfo _chatEndedField;
         private static bool _chatEndedFieldResolved;
         private static string _lastWorkspaceStateLog;
+        private static readonly Dictionary<string, bool> _workChatEnded = new Dictionary<string, bool>(StringComparer.Ordinal);
+        private static int _samChatsEnded;
+        private static int _customerChatsEnded;
 
         private static bool WorkspaceChatState(out bool samEnded, out int customersEnded)
         {
@@ -134,6 +137,8 @@ namespace DateEverythingAccess
                     Main.Log.LogWarning("Mod tutorial: ParallelChat.chatEnded not found");
             }
             if (_chatEndedField == null) return false;
+            // Customers come back with new conversations (David Most and Tom each had several), so
+            // count every conversation that finishes, not the number of customers.
             var sb = new System.Text.StringBuilder();
             foreach (ParallelChat chat in ChatMaster.Instance.WorkspaceChats)
             {
@@ -141,18 +146,24 @@ namespace DateEverythingAccess
                 bool ended = _chatEndedField.GetValue(chat) is bool b && b;
                 string name = (chat.appMessage.Name ?? string.Empty).Trim();
                 sb.Append(name).Append(ended ? "=ended " : "=open ");
-                if (!ended) continue;
-                if (name.Equals("Sam", StringComparison.OrdinalIgnoreCase) ||
-                    name.StartsWith("Sam ", StringComparison.OrdinalIgnoreCase))
-                    samEnded = true;
-                else
-                    customersEnded++;
+                bool isSam = name.Equals("Sam", StringComparison.OrdinalIgnoreCase) ||
+                    name.StartsWith("Sam ", StringComparison.OrdinalIgnoreCase);
+                bool wasEnded = _workChatEnded.TryGetValue(name, out bool prev) && prev;
+                _workChatEnded[name] = ended;
+                if (ended && !wasEnded)
+                {
+                    if (isSam) _samChatsEnded++;
+                    else _customerChatsEnded++;
+                }
             }
+            samEnded = _samChatsEnded > 0;
+            customersEnded = _customerChatsEnded;
             string state = sb.ToString();
             if (state != _lastWorkspaceStateLog && Main.Log != null)
             {
                 _lastWorkspaceStateLog = state;
-                Main.Log.LogInfo("Mod tutorial: work chats " + state);
+                Main.Log.LogInfo("Mod tutorial: work chats " + state + "| finished: Sam " + _samChatsEnded +
+                    ", customers " + _customerChatsEnded);
             }
             return true;
         }
