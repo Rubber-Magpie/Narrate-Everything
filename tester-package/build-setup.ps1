@@ -8,10 +8,13 @@ try {
     $stage = Join-Path $env:TEMP ("DEAPayload-" + [guid]::NewGuid().ToString("N"))
     New-Item -ItemType Directory -Path (Join-Path $stage "BepInEx\core") -Force | Out-Null
     New-Item -ItemType Directory -Path (Join-Path $stage "BepInEx\plugins") -Force | Out-Null
-    foreach ($f in @(".doorstop_version", "doorstop_config.ini", "winhttp.dll", "Tolk.dll", "nvdaControllerClient64.dll", "THIRD-PARTY-NOTICES.txt")) {
+    foreach ($f in @(".doorstop_version", "doorstop_config.ini", "winhttp.dll", "prism.dll")) {
         Copy-Item -LiteralPath (Join-Path $GameDir $f) -Destination $stage -Force
     }
+    # Speech goes through Prism; its license texts travel with it.
+    Copy-Item -LiteralPath (Join-Path $GameDir "Prism-Licenses") -Destination $stage -Recurse -Force
     Copy-Item -LiteralPath (Join-Path $Package "README.txt") -Destination $stage -Force
+    Copy-Item -LiteralPath (Join-Path $Package "THIRD-PARTY-NOTICES.txt") -Destination $stage -Force
     Copy-Item -Path (Join-Path $GameDir "BepInEx\core\*") -Destination (Join-Path $stage "BepInEx\core") -Force
     foreach ($f in @("DateEverythingAccess.dll", "card_pose_descriptions.en.json", "navigable_region.bake.json")) {
         Copy-Item -LiteralPath (Join-Path $GameDir ("BepInEx\plugins\" + $f)) -Destination (Join-Path $stage "BepInEx\plugins") -Force

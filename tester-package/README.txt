@@ -67,6 +67,10 @@ Mod tutorial
   tutorial message again.
 
 Other
+- Speech now goes through the Prism library instead of Tolk. It works with
+  NVDA, JAWS and other screen readers, notices if you start or quit your
+  screen reader while playing, and uses the Windows voice when none is
+  running.
 - The laundry closet is announced as "Laundry closet".
 - Characters who speak in beeps instead of a voice line (in the Sassy Chap's
   content) have their lines read aloud, even with dialogue reading turned off.
@@ -91,8 +95,9 @@ TROUBLESHOOTING
 ===============
 - If the mod does not load, make sure winhttp.dll and the BepInEx folder are
   in the game folder, next to Date Everything.exe.
-- If your screen reader stays silent, make sure Tolk.dll and
-  nvdaControllerClient64.dll are next to Date Everything.exe.
+- If your screen reader stays silent, make sure prism.dll is next to
+  Date Everything.exe. With no screen reader running, the mod speaks with
+  the Windows voice instead.
 - If installing fails, make sure the game is fully closed and try again.
 
 See THIRD-PARTY-NOTICES.txt for the included third-party components.

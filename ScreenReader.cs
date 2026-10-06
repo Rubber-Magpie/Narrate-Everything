@@ -1,48 +1,77 @@
 using System;
 using System.Runtime.InteropServices;
+using System.Text;
 
 namespace DateEverythingAccess
 {
     /// <summary>
-    /// Minimal Tolk wrapper for screen reader announcements.
+    /// Speech output through Prism (https://github.com/ethindp/prism): the running screen reader
+    /// when there is one (NVDA, JAWS and others), otherwise the system voice.
     /// </summary>
     public static class ScreenReader
     {
         private static readonly object _speechLock = new object();
+        // Prism backends are single-threaded; speech is requested from the game thread and the
+        // background hotkey thread (F1 help), so every Prism call goes through this lock.
+        private static readonly object _prismLock = new object();
 
-        [DllImport("Tolk.dll")]
-        private static extern void Tolk_Load();
+        private const string PrismDll = "prism.dll";
 
-        [DllImport("Tolk.dll")]
-        private static extern void Tolk_Unload();
+        // PrismConfig as of Prism 0.18 (PRISM_CONFIG_VERSION 3). Filled by prism_config_init.
+        [StructLayout(LayoutKind.Sequential)]
+        private struct PrismConfig
+        {
+            public byte version;
+            public IntPtr registry;
+            public IntPtr availability_callback;
+            public IntPtr availability_userdata;
+            public uint availability_poll_interval_ms;
+            public uint availability_debounce_samples;
+            public uint availability_backoff_max_ms;
+            [MarshalAs(UnmanagedType.U1)] public bool availability_auto_power_manage;
+        }
 
-        [DllImport("Tolk.dll")]
-        private static extern bool Tolk_IsLoaded();
+        private const int PrismErrorBackendNotAvailable = 16;   // PRISM_ERROR_BACKEND_NOT_AVAILABLE
 
-        [DllImport("Tolk.dll")]
-        private static extern bool Tolk_HasSpeech();
+        [DllImport(PrismDll, CallingConvention = CallingConvention.Cdecl)]
+        private static extern PrismConfig prism_config_init();
 
-        [DllImport("Tolk.dll", CharSet = CharSet.Unicode)]
-        private static extern bool Tolk_Output(string text, bool interrupt);
+        [DllImport(PrismDll, CallingConvention = CallingConvention.Cdecl)]
+        private static extern IntPtr prism_init(ref PrismConfig cfg);
 
-        [DllImport("Tolk.dll")]
-        private static extern bool Tolk_Silence();
+        [DllImport(PrismDll, CallingConvention = CallingConvention.Cdecl)]
+        private static extern void prism_shutdown(IntPtr ctx);
 
-        [DllImport("Tolk.dll", CharSet = CharSet.Unicode)]
-        private static extern IntPtr Tolk_DetectScreenReader();
+        [DllImport(PrismDll, CallingConvention = CallingConvention.Cdecl)]
+        private static extern IntPtr prism_registry_acquire_best(IntPtr ctx);
 
-        // Enables Tolk's built-in Windows SAPI driver as a fallback voice. Must be called
-        // BEFORE Tolk_Load() to take effect. When no screen reader is running, SAPI lets the
-        // mod still speak aloud through the OS voice instead of going silent.
-        [DllImport("Tolk.dll")]
-        private static extern bool Tolk_TrySAPI(bool trySAPI);
+        [DllImport(PrismDll, CallingConvention = CallingConvention.Cdecl)]
+        private static extern void prism_backend_free(IntPtr backend);
+
+        [DllImport(PrismDll, CallingConvention = CallingConvention.Cdecl)]
+        private static extern IntPtr prism_backend_name(IntPtr backend);
+
+        [DllImport(PrismDll, CallingConvention = CallingConvention.Cdecl)]
+        private static extern int prism_backend_output(IntPtr backend, byte[] utf8Text,
+            [MarshalAs(UnmanagedType.U1)] bool interrupt);
+
+        [DllImport(PrismDll, CallingConvention = CallingConvention.Cdecl)]
+        private static extern int prism_backend_stop(IntPtr backend);
+
+        private static IntPtr _prismContext;
+        private static IntPtr _backend;
+        private static string _backendName;
+        // The best available backend can change while the game runs (the player starts or quits
+        // NVDA), so the choice is checked again every few seconds, at the next thing said.
+        private static float _nextBackendCheck;
+        private const float BackendRecheckSeconds = 3f;
 
         private static bool _available;
         private static bool _usingSapiFallback;
 
         /// <summary>
-        /// True when Tolk has speech but no live screen reader is running, i.e. output is
-        /// going through the built-in SAPI voice fallback.
+        /// True when no screen reader is running and speech goes through a Windows system
+        /// voice (SAPI or OneCore) instead.
         /// </summary>
         public static bool IsUsingSapiFallback => _usingSapiFallback;
         private static bool _initialized;
@@ -63,7 +92,7 @@ namespace DateEverythingAccess
         private static bool _coalescedInterruptPending;
 
         /// <summary>
-        /// Loads Tolk and detects the active screen reader.
+        /// Starts Prism and picks the running screen reader, or the system voice.
         /// </summary>
         public static void Initialize()
         {
@@ -72,50 +101,103 @@ namespace DateEverythingAccess
 
             try
             {
-                // Enable the SAPI fallback BEFORE loading so Tolk can speak through the OS
-                // voice when no screen reader is running. Tolk still prefers a live screen
-                // reader when one is present; SAPI is only used as the last-resort driver.
-                Tolk_TrySAPI(true);
-
-                Tolk_Load();
-                _available = Tolk_IsLoaded() && Tolk_HasSpeech();
-
-                if (_available)
+                PrismConfig cfg = prism_config_init();
+                _prismContext = prism_init(ref cfg);
+                if (_prismContext == IntPtr.Zero)
                 {
-                    IntPtr srNamePtr = Tolk_DetectScreenReader();
-                    if (srNamePtr != IntPtr.Zero)
-                    {
-                        string srName = Marshal.PtrToStringUni(srNamePtr);
-                        Main.Log.LogInfo("Screen reader detected: " + srName);
-                    }
-                    else
-                    {
-                        // No screen reader, but Tolk still has speech — that's the SAPI voice.
-                        _usingSapiFallback = true;
-                        Main.Log.LogInfo("No screen reader detected; using SAPI voice fallback.");
-                    }
+                    Main.Log.LogError("Prism failed to start; speech output disabled.");
+                    _available = false;
                 }
                 else
                 {
-                    Main.Log.LogWarning("No screen reader detected and no SAPI voice available; Tolk output disabled.");
+                    lock (_prismLock)
+                        PickBestBackend(logChoice: true);
+                    if (!_available)
+                        Main.Log.LogWarning("Prism found no screen reader and no system voice; speech output disabled.");
                 }
             }
             catch (DllNotFoundException)
             {
-                Main.Log.LogError("Tolk.dll or nvdaControllerClient64.dll is missing from the game directory.");
+                Main.Log.LogError("prism.dll is missing from the game directory.");
+                _available = false;
+            }
+            catch (EntryPointNotFoundException ex)
+            {
+                Main.Log.LogError("prism.dll is not the expected version: " + ex.Message);
                 _available = false;
             }
             catch (Exception ex)
             {
-                Main.Log.LogError("Failed to initialize Tolk: " + ex.Message);
+                Main.Log.LogError("Failed to initialize Prism: " + ex.Message);
                 _available = false;
             }
 
             _initialized = true;
         }
 
+        // Prism tries its backends from highest priority down (screen readers before the system
+        // voices) and returns the first that works. Call with _prismLock held.
+        private static void PickBestBackend(bool logChoice)
+        {
+            try { _nextBackendCheck = UnityEngine.Time.realtimeSinceStartup + BackendRecheckSeconds; }
+            catch { }   // called off the main thread: Unity's clock isn't readable there
+            IntPtr best = prism_registry_acquire_best(_prismContext);
+            if (best == IntPtr.Zero)
+            {
+                if (_backend != IntPtr.Zero) { prism_backend_free(_backend); _backend = IntPtr.Zero; }
+                _available = false;
+                _backendName = null;
+                return;
+            }
+            if (best == _backend)
+            {
+                prism_backend_free(best);   // drop the extra reference; keep using it
+                return;
+            }
+            if (_backend != IntPtr.Zero) prism_backend_free(_backend);
+            _backend = best;
+            _available = true;
+            IntPtr namePtr = prism_backend_name(best);
+            string name = namePtr != IntPtr.Zero ? PtrToUtf8(namePtr) : "?";
+            bool changed = !string.Equals(name, _backendName, StringComparison.Ordinal);
+            _backendName = name;
+            _usingSapiFallback = name.IndexOf("SAPI", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                name.IndexOf("OneCore", StringComparison.OrdinalIgnoreCase) >= 0;
+            if ((logChoice || changed) && Main.Log != null)
+                Main.Log.LogInfo(_usingSapiFallback
+                    ? "No screen reader detected; using the system voice (" + name + ")."
+                    : "Screen reader detected: " + name);
+        }
+
+        private static void RecheckBackendIfDue()
+        {
+            if (_prismContext == IntPtr.Zero) return;
+            float now;
+            try { now = UnityEngine.Time.realtimeSinceStartup; }
+            catch { return; }   // off the main thread before Unity is ready: skip the recheck
+            if (now < _nextBackendCheck) return;
+            PickBestBackend(logChoice: false);
+        }
+
+        private static string PtrToUtf8(IntPtr ptr)
+        {
+            int len = 0;
+            while (Marshal.ReadByte(ptr, len) != 0) len++;
+            byte[] buf = new byte[len];
+            Marshal.Copy(ptr, buf, 0, len);
+            return Encoding.UTF8.GetString(buf);
+        }
+
+        private static byte[] ToUtf8(string text)
+        {
+            byte[] raw = Encoding.UTF8.GetBytes(text);
+            byte[] z = new byte[raw.Length + 1];
+            Buffer.BlockCopy(raw, 0, z, 0, raw.Length);
+            return z;
+        }
+
         /// <summary>
-        /// Speaks text through Tolk and optionally remembers it for replay.
+        /// Speaks text through Prism and optionally remembers it for replay.
         /// </summary>
         public static void Say(string text, bool interrupt = true, bool remember = true, bool rememberAsRepeatable = false)
         {
@@ -140,7 +222,9 @@ namespace DateEverythingAccess
 
             DebugLogger.LogScreenReader(text);
 
-            if (!_available)
+            // Not gated on _available: with Prism running but nothing to speak through yet (no
+            // screen reader, no voice), Output re-checks every few seconds and picks one up.
+            if (_prismContext == IntPtr.Zero)
                 return;
 
             try
@@ -181,29 +265,34 @@ namespace DateEverythingAccess
         }
 
         /// <summary>
-        /// Sends text to Tolk, issuing an explicit silence first when interrupting.
+        /// Sends text to Prism, issuing an explicit stop first when interrupting.
         ///
-        /// Tolk's own interrupt flag (Tolk_Output(text, true)) bundles a cancel + speak, but with NVDA in SLEEP MODE
-        /// that bundled cancel does not clear NVDA's speech queue, so a new focus-change announcement gets appended
-        /// BEHIND whatever is still being spoken instead of cutting it off. Calling Tolk_Silence() (→ NVDA controller
-        /// cancelSpeech) as a separate, ordered call before the output reliably flushes the queue first, so the latest
-        /// announcement is spoken immediately. Harmless when NVDA is awake (silence then speak is the normal interrupt).
+        /// With NVDA in SLEEP MODE, an interrupting speak on its own did not clear NVDA's speech queue (seen with
+        /// Tolk), so a new focus-change announcement got appended BEHIND whatever was still being spoken instead of
+        /// cutting it off. A separate, ordered stop before the output flushes the queue first, so the latest
+        /// announcement is spoken immediately. Harmless when NVDA is awake (stop then speak is the normal interrupt).
         /// </summary>
         private static void Output(string text, bool interrupt)
         {
-            if (interrupt)
+            lock (_prismLock)
             {
-                try
+                RecheckBackendIfDue();
+                if (_backend == IntPtr.Zero)
+                    return;
+                if (interrupt)
                 {
-                    Tolk_Silence();
+                    // An explicit stop first, then the new line (see above).
+                    try { prism_backend_stop(_backend); } catch { }
                 }
-                catch
+                int err = prism_backend_output(_backend, ToUtf8(text), interrupt);
+                if (err == PrismErrorBackendNotAvailable)
                 {
-                    // A failed pre-silence must not block the speak that follows.
+                    // The screen reader went away (NVDA quit): switch now and say it there.
+                    PickBestBackend(logChoice: false);
+                    if (_backend != IntPtr.Zero)
+                        prism_backend_output(_backend, ToUtf8(text), interrupt);
                 }
             }
-
-            Tolk_Output(text, interrupt);
         }
 
         /// <summary>
@@ -230,7 +319,7 @@ namespace DateEverythingAccess
 
             DebugLogger.LogScreenReader(lastSpokenText);
 
-            if (!_available)
+            if (_prismContext == IntPtr.Zero)
                 return true;
 
             try
@@ -255,7 +344,11 @@ namespace DateEverythingAccess
 
             try
             {
-                Tolk_Silence();
+                lock (_prismLock)
+                {
+                    if (_backend != IntPtr.Zero)
+                        prism_backend_stop(_backend);
+                }
             }
             catch
             {
@@ -263,7 +356,7 @@ namespace DateEverythingAccess
         }
 
         /// <summary>
-        /// Unloads Tolk and clears cached speech state.
+        /// Shuts Prism down and clears cached speech state.
         /// </summary>
         public static void Shutdown()
         {
@@ -272,7 +365,19 @@ namespace DateEverythingAccess
 
             try
             {
-                Tolk_Unload();
+                lock (_prismLock)
+                {
+                    if (_backend != IntPtr.Zero)
+                    {
+                        prism_backend_free(_backend);
+                        _backend = IntPtr.Zero;
+                    }
+                    if (_prismContext != IntPtr.Zero)
+                    {
+                        prism_shutdown(_prismContext);
+                        _prismContext = IntPtr.Zero;
+                    }
+                }
             }
             catch
             {

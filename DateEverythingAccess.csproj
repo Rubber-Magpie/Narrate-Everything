@@ -41,6 +41,10 @@
        in the project root without recompiling; CardPoseDescriptions reads them from the plugin
        folder at runtime. -->
   <ItemGroup>
+    <PrismLicenseFiles Include="$(ProjectDir)lib\prism\LICENSES\**\*;$(ProjectDir)lib\prism\NOTICE.txt;$(ProjectDir)lib\prism\VERSION.txt" />
+  </ItemGroup>
+
+  <ItemGroup>
     <CardPoseDescriptionFiles Include="$(ProjectDir)card_pose_descriptions.*.json" />
   </ItemGroup>
 
@@ -120,6 +124,10 @@
     <Copy SourceFiles="$(NavigableRegionBakeSourcePath)" DestinationFiles="$(GameDir)\BepInEx\plugins\navigable_region.bake.json" Condition="Exists('$(NavigableRegionBakeSourcePath)')" />
     <Copy SourceFiles="@(CardPoseDescriptionFiles)" DestinationFolder="$(GameDir)\BepInEx\plugins\" SkipUnchangedFiles="true" />
     <Message Text="Copied $(TargetFileName) to BepInEx plugins folder" Importance="High" />
+    <!-- Speech output: Prism's DLL sits next to Date Everything.exe, where the game loads it from,
+         with its license texts in a Prism-Licenses folder beside it. -->
+    <Copy SourceFiles="$(ProjectDir)lib\prism\prism.dll" DestinationFolder="$(GameDir)\" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(PrismLicenseFiles)" DestinationFiles="@(PrismLicenseFiles->'$(GameDir)\Prism-Licenses\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
     <!-- Wipe captured C# routes on every deploy: a new DLL or bake invalidates
          them for parity diffing (they were planned against the old planner /
          bake). Keeps c_sharp_routes/ self-limited and the parity check honest. -->
