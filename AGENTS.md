@@ -1,5 +1,7 @@
 # Accessibility Mod Template
 
+Current state of this fork, recent work and how to build, test and push: see `HANDOFF.md`.
+
 ## User
 
 - Blind, screen reader user
