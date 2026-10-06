@@ -31,8 +31,6 @@ namespace DateEverythingAccess
             [MarshalAs(UnmanagedType.U1)] public bool availability_auto_power_manage;
         }
 
-        private const int PrismErrorBackendNotAvailable = 16;   // PRISM_ERROR_BACKEND_NOT_AVAILABLE
-
         [DllImport(PrismDll, CallingConvention = CallingConvention.Cdecl)]
         private static extern PrismConfig prism_config_init();
 
@@ -58,13 +56,31 @@ namespace DateEverythingAccess
         [DllImport(PrismDll, CallingConvention = CallingConvention.Cdecl)]
         private static extern int prism_backend_stop(IntPtr backend);
 
+        // Called by Prism on its own background thread whenever a backend becomes available or
+        // unavailable (the player starts or quits NVDA). It only raises a flag; the switch happens
+        // at the next thing said.
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate void PrismAvailabilityCallback(IntPtr userdata, ulong backend, IntPtr name,
+            [MarshalAs(UnmanagedType.U1)] bool available);
+
+        private static readonly PrismAvailabilityCallback _availabilityCallback = OnBackendAvailabilityChanged;
+        private static volatile bool _backendsChanged;
+
+        private static void OnBackendAvailabilityChanged(IntPtr userdata, ulong backend, IntPtr name, bool available)
+        {
+            _backendsChanged = true;
+            try
+            {
+                if (Main.Log != null)
+                    Main.Log.LogInfo("Speech: " + (name != IntPtr.Zero ? PtrToUtf8(name) : "backend") +
+                        (available ? " became available" : " stopped"));
+            }
+            catch { }
+        }
+
         private static IntPtr _prismContext;
         private static IntPtr _backend;
         private static string _backendName;
-        // The best available backend can change while the game runs (the player starts or quits
-        // NVDA), so the choice is checked again every few seconds, at the next thing said.
-        private static float _nextBackendCheck;
-        private const float BackendRecheckSeconds = 3f;
 
         private static bool _available;
         private static bool _usingSapiFallback;
@@ -102,6 +118,10 @@ namespace DateEverythingAccess
             try
             {
                 PrismConfig cfg = prism_config_init();
+                // Ask Prism to watch for screen readers starting and stopping (it polls about once
+                // a second on its own thread) so speech can move to NVDA when it starts and back
+                // to the Windows voice when it quits.
+                cfg.availability_callback = Marshal.GetFunctionPointerForDelegate(_availabilityCallback);
                 _prismContext = prism_init(ref cfg);
                 if (_prismContext == IntPtr.Zero)
                 {
@@ -136,25 +156,26 @@ namespace DateEverythingAccess
         }
 
         // Prism tries its backends from highest priority down (screen readers before the system
-        // voices) and returns the first that works. Call with _prismLock held.
+        // voices) and returns the first that works. The one in use is let go first: Prism keeps
+        // backends it has handed out, and while we held NVDA's it kept giving it back even after
+        // NVDA had quit, so the Windows voice never took over. Call with _prismLock held.
         private static void PickBestBackend(bool logChoice)
         {
-            try { _nextBackendCheck = UnityEngine.Time.realtimeSinceStartup + BackendRecheckSeconds; }
-            catch { }   // called off the main thread: Unity's clock isn't readable there
+            _backendsChanged = false;
+            if (_backend != IntPtr.Zero)
+            {
+                prism_backend_free(_backend);
+                _backend = IntPtr.Zero;
+            }
             IntPtr best = prism_registry_acquire_best(_prismContext);
             if (best == IntPtr.Zero)
             {
-                if (_backend != IntPtr.Zero) { prism_backend_free(_backend); _backend = IntPtr.Zero; }
+                if ((logChoice || _backendName != null) && Main.Log != null)
+                    Main.Log.LogWarning("Speech: no screen reader or system voice available.");
                 _available = false;
                 _backendName = null;
                 return;
             }
-            if (best == _backend)
-            {
-                prism_backend_free(best);   // drop the extra reference; keep using it
-                return;
-            }
-            if (_backend != IntPtr.Zero) prism_backend_free(_backend);
             _backend = best;
             _available = true;
             IntPtr namePtr = prism_backend_name(best);
@@ -172,11 +193,8 @@ namespace DateEverythingAccess
         private static void RecheckBackendIfDue()
         {
             if (_prismContext == IntPtr.Zero) return;
-            float now;
-            try { now = UnityEngine.Time.realtimeSinceStartup; }
-            catch { return; }   // off the main thread before Unity is ready: skip the recheck
-            if (now < _nextBackendCheck) return;
-            PickBestBackend(logChoice: false);
+            if (_backendsChanged || _backend == IntPtr.Zero)
+                PickBestBackend(logChoice: false);
         }
 
         private static string PtrToUtf8(IntPtr ptr)
@@ -285,9 +303,11 @@ namespace DateEverythingAccess
                     try { prism_backend_stop(_backend); } catch { }
                 }
                 int err = prism_backend_output(_backend, ToUtf8(text), interrupt);
-                if (err == PrismErrorBackendNotAvailable)
+                if (err != 0)
                 {
-                    // The screen reader went away (NVDA quit): switch now and say it there.
+                    // Speaking failed: most likely the screen reader just went away (NVDA quit, and
+                    // Prism hasn't reported it yet). Switch now and say it there.
+                    if (Main.Log != null) Main.Log.LogInfo("Speech: " + (_backendName ?? "backend") + " failed (error " + err + "); switching");
                     PickBestBackend(logChoice: false);
                     if (_backend != IntPtr.Zero)
                         prism_backend_output(_backend, ToUtf8(text), interrupt);
