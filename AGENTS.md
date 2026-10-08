@@ -1,6 +1,6 @@
 # Accessibility Mod Template
 
-Current state of this fork, recent work and how to build, test and push: see `HANDOFF.md`.
+Current state of the project, recent work and how to build and test: see `HANDOFF.md`.
 
 ## User
 
