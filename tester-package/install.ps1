@@ -1,10 +1,10 @@
-# Date Everything Access test build installer. Runs from the self-extracting
+# Narrate Everything installer. Runs from the self-extracting
 # setup: finds the game, then copies the mod and its loader into it.
 param([string]$GamePath)
 $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
-$title = "Date Everything Access Setup"
+$title = "Narrate Everything Setup"
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 
 # A hidden, always-on-top owner so every message box and the folder picker come to the
@@ -100,7 +100,7 @@ try {
         Remove-Item -LiteralPath $staging -Recurse -Force -ErrorAction SilentlyContinue
     }
 
-    Say ("Date Everything Access is installed in:`n$GamePath`n`nStart the game and you should hear the mod's startup announcement. The README is in the game folder.") | Out-Null
+    Say ("Narrate Everything is installed in:`n$GamePath`n`nStart the game and you should hear the mod's startup announcement. The README is in the game folder.") | Out-Null
     exit 0
 } catch {
     Say ("Installation failed:`n" + $_.Exception.Message + "`n`nMake sure the game is closed and try again.") "OK" "Error" | Out-Null

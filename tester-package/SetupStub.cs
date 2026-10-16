@@ -1,4 +1,4 @@
-// Date Everything Access test build setup. A small Windows program that carries the
+// Narrate Everything setup. A small Windows program that carries the
 // installer script and the mod files inside it, unpacks them to a temporary folder, runs
 // the installer script, and cleans up.
 using System;
@@ -30,7 +30,7 @@ static class Program
         }
         catch (Exception ex)
         {
-            MessageBox.Show("The setup could not start: " + ex.Message, "Date Everything Access Setup",
+            MessageBox.Show("The setup could not start: " + ex.Message, "Narrate Everything Setup",
                 MessageBoxButtons.OK, MessageBoxIcon.Error);
             return 1;
         }

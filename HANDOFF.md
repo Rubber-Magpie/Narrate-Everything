@@ -21,7 +21,7 @@ for the project rules.
   before launching it again, because Steam shows an error if it's already running. The first
   run backs up the installed mod DLL to `backup\`.
 - `Restore-Original-Mod.bat` puts that backed-up DLL back.
-- `Make-Tester-Installer.bat` builds `DateEverythingAccess-Setup.exe` for testers from the
+- `Make-Tester-Installer.bat` builds `NarrateEverything-Setup.exe`, the one file players run, from the
   installed copy in the game folder (`tester-package\build-setup.ps1`). The setup finds the
   game itself, or asks for the folder.
 - Game log: `BepInEx\LogOutput.log` in the game folder. F9 turns on debug mode, which also logs

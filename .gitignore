@@ -63,6 +63,7 @@ build-log.txt
 *-log.txt
 tester-crossover.log
 DateEverythingAccess-Setup.exe
+NarrateEverything-Setup.exe
 tester-package/payload.zip
 tester-package/setup-build-log.txt
 tester-package/setup.sed.txt

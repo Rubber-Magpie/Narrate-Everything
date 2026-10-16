@@ -127,7 +127,7 @@ namespace DateEverythingAccess
 
         private static void InitializeEnglish()
         {
-            Add("mod_loaded", "Date Everything Access loaded. Press F-1 for accessibility help.");
+            Add("mod_loaded", "Narrate Everything loaded. Press F-1 for accessibility help.");
             Add("help_text", "Date Everything Access. Focused items, dialogue, screen text, phone app text, rooms, nearby objects, and status changes can be spoken automatically. F1 for help. Backtick repeats the last spoken line. H repeats the last mod tutorial message. L reports the current room and objects relative to the direction you are facing. Ctrl plus O tracks the current objective. O opens the known objects list. In the list, Up and Down move the selection, Enter selects, Backspace closes, Left and Right change the sort, F toggles this floor only, M cycles the section filter, and D toggles doors only. Alt plus O toggles auto-walk to the selected target; if you are already next to it, Alt plus O instead gives directions until you are aimed at it. Ctrl+F1 opens accessibility settings. While aiming at the office bulletin board, Page Down and Page Up step through its photos.");
             Add("debug_mode_enabled", "Debug mode enabled.");
             Add("debug_mode_enabled_with_mapping_dump", "Debug mode enabled. Current input mappings for {0} devices were written to the log.");
@@ -395,7 +395,7 @@ namespace DateEverythingAccess
         private static void InitializeJapanese()
         {
             AddJa("mod_loaded",
-                "Date Everything Access を読み込みました。アクセシビリティのヘルプは F1 キーを押してください。");
+                "Narrate Everything を読み込みました。アクセシビリティのヘルプは F1 キーを押してください。");
             AddJa("help_text",
                 "Date Everything Access。フォーカス項目、会話、画面テキスト、電話アプリのテキスト、部屋、近くのオブジェクト、状態の変化を自動で読み上げできます。F1でヘルプ。バッククォート（`）で最後の読み上げを繰り返します。Lで現在の部屋と、向いている方向を基準にしたオブジェクトを知らせます。Ctrl+Oで現在の目標を追跡します。Oで既知オブジェクトの一覧を開きます。一覧では上下で選択を移動、Enterで決定、Backspaceで閉じる、左右で並び替え、Fでこの階のみ切り替え、Mでセクションフィルターを切り替え、Dでドアのみ切り替えます。Alt+Oで選択した目標へのオートウォークを切り替えます。Ctrl+F1でアクセシビリティ設定を開きます。オフィスの掲示板に照準を合わせている間は、Page Down と Page Up で写真を順に確認できます。");
             AddJa("debug_mode_enabled", "デバッグモードを有効にしました。");

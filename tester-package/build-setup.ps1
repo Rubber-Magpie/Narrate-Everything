@@ -1,4 +1,4 @@
-# Builds DateEverythingAccess-Setup.exe with the C# compiler that comes with Windows.
+# Builds NarrateEverything-Setup.exe with the C# compiler that comes with Windows.
 # Make-Tester-Installer.bat finds the game folder and passes it as -GameDir.
 param([string]$Package, [string]$Out, [string]$Log, [Parameter(Mandatory = $true)][string]$GameDir)
 $ErrorActionPreference = "Stop"

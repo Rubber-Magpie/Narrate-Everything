@@ -13,7 +13,7 @@ How to Install
 3. The installer looks for your Steam copy of the game and asks before
    installing there. If it cannot find it, or you say No, it lets you pick
    your Date Everything! folder (the one containing Date Everything.exe).
-4. Start the game. You should hear, "Date Everything Access loaded. Press F-1 for accessibility help."
+4. Start the game. You should hear, "Narrate Everything loaded. Press F-1 for accessibility help."
 
 The installer includes the BepInEx mod loader and the screen reader files,
 so nothing else needs to be installed. Your existing mod settings are kept.
