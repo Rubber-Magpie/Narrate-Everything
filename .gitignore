@@ -69,3 +69,4 @@ tester-package/setup-build-log.txt
 tester-package/setup.sed.txt
 *.bundle
 tester-package/*/
+NarrateEverything-*.zip
