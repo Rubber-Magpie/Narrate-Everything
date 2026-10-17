@@ -1,0 +1,7 @@
+# Static C runtime: the exe needs no Visual C++ runtime installed (clean PCs, CrossOver/Wine).
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+# The shared installer's repository is private: fetch it with git's own sign-in.
+[net]
+git-fetch-with-cli = true

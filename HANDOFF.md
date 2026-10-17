@@ -21,9 +21,14 @@ for the project rules.
   before launching it again, because Steam shows an error if it's already running. The first
   run backs up the installed mod DLL to `backup\`.
 - `Restore-Original-Mod.bat` puts that backed-up DLL back.
-- `Make-Tester-Installer.bat` builds `NarrateEverything-Setup.exe`, the one file players run, from the
-  installed copy in the game folder (`tester-package\build-setup.ps1`). The setup finds the
-  game itself, or asks for the folder.
+- `Make-Installer.bat` builds `dist\NarrateEverythingInstaller.exe`, the one file players run
+  (`scripts\Package-Installer.ps1`; its log is `installer-build-log.txt`). It's the Rubber
+  Magpie installer (github.com/Rubber-Magpie/magpie-installer, shared by the org's mods) with
+  this mod's part in `installer\src\game.rs`. The version is in `installer\Cargo.toml`. The mod
+  is built fresh; BepInEx is taken from the game folder. Needs Rust (x64 MSVC) and Visual
+  Studio 2022 Build Tools with C++ and Clang; the first build compiles wxWidgets and is slow.
+  The installer records what it added (`NarrateEverything-installed.txt` in the game folder),
+  so Uninstall removes only that, and under CrossOver/Wine it sets winhttp to native.
 - Game log: `BepInEx\LogOutput.log` in the game folder. F9 turns on debug mode, which also logs
   everything spoken (`[SR]` lines).
 

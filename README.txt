@@ -7,16 +7,18 @@ This fork smooths out navigation and small object tracking. It adds the option t
 How to Install
 ==============
 1. Close the game.
-2. Run DateEverythingAccess-Setup.exe.
+2. Run NarrateEverythingInstaller.exe.
    Windows may warn that the program is from an unknown publisher. Choose
    "More info", then "Run anyway".
-3. The installer looks for your Steam copy of the game and asks before
-   installing there. If it cannot find it, or you say No, it lets you pick
-   your Date Everything! folder (the one containing Date Everything.exe).
+3. The installer finds your Steam copy of the game and shows its folder. If
+   it's the wrong one, or none was found, choose Browse and pick your
+   Date Everything! folder (the one containing Date Everything.exe). Then
+   choose Install (Update if an earlier version is installed).
 4. Start the game. You should hear, "Narrate Everything loaded. Press F-1 for accessibility help."
 
 The installer includes the BepInEx mod loader and the screen reader files,
 so nothing else needs to be installed. Your existing mod settings are kept.
+To remove the mod, run the installer again and choose Uninstall.
 
 Changes
 =======

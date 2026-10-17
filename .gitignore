@@ -70,3 +70,5 @@ tester-package/setup.sed.txt
 *.bundle
 tester-package/*/
 NarrateEverything-*.zip
+dist/
+installer/target/
