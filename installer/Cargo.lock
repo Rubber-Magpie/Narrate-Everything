@@ -683,7 +683,7 @@ dependencies = [
 
 [[package]]
 name = "narrate-everything-installer"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "magpie-installer",
  "magpie-payload",
